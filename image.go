@@ -68,6 +68,9 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 		}
 	}
 
+	// Apply EXIF orientation correction if needed
+	img = applyEXIFOrientation(img, fileData)
+
 	// Get original dimensions
 	bounds := img.Bounds()
 	originalWidth := bounds.Dx()
@@ -310,6 +313,131 @@ func extractHEICExif(data []byte) ([]byte, error) {
 }
 
 // insertEXIFCorrectly inserts EXIF data into JPEG file with proper APP1 segment structure
+// applyEXIFOrientation applies EXIF orientation correction to the image
+func applyEXIFOrientation(img image.Image, fileData []byte) image.Image {
+	// Try to extract EXIF orientation
+	reader := bytes.NewReader(fileData)
+	x, err := exif.Decode(reader)
+	if err != nil {
+		// No EXIF data or unable to decode, return original image
+		return img
+	}
+
+	// Get orientation tag
+	orientationTag, err := x.Get(exif.Orientation)
+	if err != nil {
+		// No orientation tag, return original image
+		return img
+	}
+
+	// Get orientation value
+	orientation, err := orientationTag.Int(0)
+	if err != nil {
+		return img
+	}
+
+	// Apply transformation based on orientation value
+	switch orientation {
+	case 1:
+		// Normal orientation, no transformation needed
+		return img
+	case 2:
+		// Flip horizontal
+		return flipHorizontal(img)
+	case 3:
+		// Rotate 180 degrees
+		return rotate180(img)
+	case 4:
+		// Flip vertical
+		return flipVertical(img)
+	case 5:
+		// Rotate 90 degrees clockwise and flip horizontal
+		return flipHorizontal(rotate90CW(img))
+	case 6:
+		// Rotate 90 degrees clockwise
+		return rotate90CW(img)
+	case 7:
+		// Rotate 90 degrees counter-clockwise and flip horizontal
+		return flipHorizontal(rotate90CCW(img))
+	case 8:
+		// Rotate 90 degrees counter-clockwise
+		return rotate90CCW(img)
+	default:
+		// Unknown orientation, return original
+		return img
+	}
+}
+
+// rotate90CW rotates image 90 degrees clockwise
+func rotate90CW(src image.Image) image.Image {
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, h, w))
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(h-1-y, x, src.At(x, y))
+		}
+	}
+	return dst
+}
+
+// rotate90CCW rotates image 90 degrees counter-clockwise
+func rotate90CCW(src image.Image) image.Image {
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, h, w))
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(y, w-1-x, src.At(x, y))
+		}
+	}
+	return dst
+}
+
+// rotate180 rotates image 180 degrees
+func rotate180(src image.Image) image.Image {
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(w-1-x, h-1-y, src.At(x, y))
+		}
+	}
+	return dst
+}
+
+// flipHorizontal flips image horizontally
+func flipHorizontal(src image.Image) image.Image {
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(w-1-x, y, src.At(x, y))
+		}
+	}
+	return dst
+}
+
+// flipVertical flips image vertically
+func flipVertical(src image.Image) image.Image {
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(x, h-1-y, src.At(x, y))
+		}
+	}
+	return dst
+}
+
 func insertEXIFCorrectly(jpegData, exifData []byte) []byte {
 	if len(jpegData) < 4 || jpegData[0] != 0xFF || jpegData[1] != 0xD8 {
 		return jpegData // Not a valid JPEG file
