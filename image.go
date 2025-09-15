@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jdeng/goheif"
 	"github.com/nfnt/resize"
 	"github.com/rwcarlsen/goexif/exif"
 )
@@ -38,7 +37,7 @@ func processImage(inputPath, outputPath, relPath string, info os.FileInfo, dirSt
 	} else if ext == ".heic" {
 		// Extract EXIF from HEIC files
 		var err error
-		exifData, err = extractHEICExif(fileData)
+		exifData, err = extractHEICExifData(fileData)
 		if err != nil {
 			// EXIF extraction failure is not fatal, continue processing
 			fmt.Printf("Warning: unable to extract EXIF information from %s: %v\n", inputPath, err)
@@ -50,7 +49,7 @@ func processImage(inputPath, outputPath, relPath string, info os.FileInfo, dirSt
 	var img image.Image
 	if ext == ".heic" {
 		// Decode HEIC image
-		img, err = goheif.Decode(bytes.NewReader(fileData))
+		img, err = decodeHEIC(fileData)
 		if err != nil {
 			return fmt.Errorf("failed to decode HEIC image: %v", err)
 		}
@@ -307,19 +306,6 @@ func extractEXIF(data []byte) ([]byte, error) {
 	}
 
 	return nil, fmt.Errorf("EXIF data not found")
-}
-
-// extractHEICExif extracts EXIF information from HEIC file data
-func extractHEICExif(data []byte) ([]byte, error) {
-	reader := bytes.NewReader(data)
-
-	// Use goheif.ExtractExif to extract EXIF from HEIC file
-	exifData, err := goheif.ExtractExif(reader)
-	if err != nil {
-		return nil, err
-	}
-
-	return exifData, nil
 }
 
 // insertEXIFCorrectly inserts EXIF data into JPEG file with proper APP1 segment structure
