@@ -1,7 +1,11 @@
 module batchMedia
 
-go 1.21
+go 1.22.3
+
+toolchain go1.24.1
 
 require github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 
 require github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
+
+require github.com/jdeng/goheif v0.0.0-20250911003654-7dc867c5b886 // indirect

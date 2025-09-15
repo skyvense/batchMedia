@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -19,7 +20,29 @@ type Config struct {
 	IgnoreSmartLimit bool
 }
 
+type ProcessStats struct {
+	TotalFiles       int
+	ProcessedImages  int
+	CopiedFiles      int
+	SkippedImages    int
+	TotalInputSize   int64
+	TotalOutputSize  int64
+	ProcessingTime   string
+	Files            []FileInfo
+}
+
+type FileInfo struct {
+	Path         string
+	Type         string // "processed", "copied", "skipped"
+	InputSize    int64
+	OutputSize   int64
+	OriginalDim  string
+	NewDim       string
+	CompressionRatio float64
+}
+
 var config Config
+var stats ProcessStats
 
 func init() {
 	flag.StringVar(&config.InputDir, "inputdir", "", "Input directory path (required)")
@@ -134,28 +157,48 @@ func processImages() error {
 			return nil
 		}
 
-		// Check if it's a JPEG file
+		// Check file extension
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".jpg" && ext != ".jpeg" {
-			return nil
-		}
-
-		fmt.Printf("Processing file: %s\n", path)
-
+		isSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic"
+		
 		// Calculate relative path
 		relPath, err := filepath.Rel(config.InputDir, path)
 		if err != nil {
 			return err
 		}
-
+		
 		// Build output path
 		outputPath := filepath.Join(config.OutputDir, relPath)
-
+		
 		// Ensure output directory exists
 		outputDir := filepath.Dir(outputPath)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
 			return err
 		}
+		
+		stats.TotalFiles++
+		
+		if !isSupported {
+			// Copy unsupported files directly
+			fmt.Printf("Copying unsupported file: %s (size: %d bytes)\n", path, info.Size())
+			stats.CopiedFiles++
+			stats.TotalInputSize += info.Size()
+			stats.TotalOutputSize += info.Size()
+			
+			// Record file info
+			stats.Files = append(stats.Files, FileInfo{
+				Path:         relPath,
+				Type:         "copied",
+				InputSize:    info.Size(),
+				OutputSize:   info.Size(),
+				CompressionRatio: 1.0,
+			})
+			
+			return copyFile(path, outputPath, info)
+		}
+
+		fmt.Printf("Processing file: %s (size: %d bytes)\n", path, info.Size())
+		stats.TotalInputSize += info.Size()
 
 		// Process image
 		return processImage(path, outputPath, info)
@@ -169,9 +212,138 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Record start time
+	startTime := time.Now()
+
 	if err := processImages(); err != nil {
 		log.Fatal(err)
 	}
 
+	// Record processing time
+	stats.ProcessingTime = time.Since(startTime).String()
+
+	// Generate HTML report
+	if err := generateHTMLReport(); err != nil {
+		fmt.Printf("Warning: failed to generate HTML report: %v\n", err)
+	}
+
 	fmt.Println("Batch processing completed!")
+	fmt.Printf("Processing summary: %d total files, %d processed, %d copied, %d skipped\n", 
+		stats.TotalFiles, stats.ProcessedImages, stats.CopiedFiles, stats.SkippedImages)
+}
+
+// generateHTMLReport generates an HTML report of the processing results
+func generateHTMLReport() error {
+	reportPath := filepath.Join(config.OutputDir, "processing_report.html")
+	
+	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Media Processing Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; text-align: center; }
+        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center; }
+        .stat-number { font-size: 24px; font-weight: bold; color: #007bff; }
+        .stat-label { color: #666; margin-top: 5px; }
+        table { width: 100%%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; font-weight: bold; }
+        .processed { color: #28a745; }
+        .copied { color: #ffc107; }
+        .skipped { color: #6c757d; }
+        .size { text-align: right; }
+        .ratio { text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Batch Media Processing Report</h1>
+        
+        <div class="summary">
+            <div class="stat-card">
+                <div class="stat-number">%d</div>
+                <div class="stat-label">Total Files</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">%d</div>
+                <div class="stat-label">Processed Images</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">%d</div>
+                <div class="stat-label">Copied Files</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">%d</div>
+                <div class="stat-label">Skipped Images</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">%.1f MB</div>
+                <div class="stat-label">Input Size</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">%.1f MB</div>
+                <div class="stat-label">Output Size</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">%.1f%%</div>
+                <div class="stat-label">Space Saved</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">%s</div>
+                <div class="stat-label">Processing Time</div>
+            </div>
+        </div>
+        
+        <h2>File Details</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>File</th>
+                    <th>Type</th>
+                    <th>Input Size</th>
+                    <th>Output Size</th>
+                    <th>Compression Ratio</th>
+                </tr>
+            </thead>
+            <tbody>`,
+		stats.TotalFiles,
+		stats.ProcessedImages,
+		stats.CopiedFiles,
+		stats.SkippedImages,
+		float64(stats.TotalInputSize)/1024/1024,
+		float64(stats.TotalOutputSize)/1024/1024,
+		(1.0-float64(stats.TotalOutputSize)/float64(stats.TotalInputSize))*100,
+		stats.ProcessingTime)
+	
+	// Add file details
+	for _, file := range stats.Files {
+		htmlContent += fmt.Sprintf(`
+                <tr>
+                    <td>%s</td>
+                    <td class="%s">%s</td>
+                    <td class="size">%.1f KB</td>
+                    <td class="size">%.1f KB</td>
+                    <td class="ratio">%.2f</td>
+                </tr>`,
+			file.Path,
+			file.Type,
+			file.Type,
+			float64(file.InputSize)/1024,
+			float64(file.OutputSize)/1024,
+			file.CompressionRatio)
+	}
+	
+	htmlContent += `
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>`
+	
+	return os.WriteFile(reportPath, []byte(htmlContent), 0644)
 }

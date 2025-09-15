@@ -1,10 +1,10 @@
 # batchMedia - Batch Media Processing Tool
 
-A command-line tool written in Go for batch processing JPEG image files. Supports resizing images by ratio or specified width while preserving original file modification dates.
+A command-line tool written in Go for batch processing JPEG and HEIC image files. Supports resizing images by ratio or specified width while preserving original file modification dates.
 
 ## Features
 
-- 🖼️ Batch processing of JPEG/JPG format images
+- 🖼️ Batch processing of JPEG/JPG and HEIC format images
 - 📏 Two scaling modes: proportional scaling and width-based scaling
 - 📅 Preserves original file modification dates
 - 📁 Recursive processing of subdirectories
@@ -105,7 +105,7 @@ Running the program without any parameters will automatically create test images
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `-inputdir` | string | Yes | Input directory path containing JPEG files to process |
+| `-inputdir` | string | Yes | Input directory path containing JPEG/HEIC files to process |
 | `-out` | string | Yes | Output directory path where processed files will be saved |
 | `-size` | float | No | Scaling ratio, range 0-10 (mutually exclusive with -width) |
 | `-width` | int | No | Target width in pixels (mutually exclusive with -size) |
@@ -116,13 +116,13 @@ Running the program without any parameters will automatically create test images
 
 ## How It Works
 
-1. **File Discovery**: Recursively scans input directory to find all `.jpg` and `.jpeg` files
+1. **File Discovery**: Recursively scans input directory to find all `.jpg`, `.jpeg`, and `.heic` files
 2. **Smart Filtering**: 
    - Determines operation type based on scaling ratio (> 1.0 = upscaling, < 1.0 = downscaling)
    - Applies threshold filtering to skip inappropriate images
    - Uses intelligent defaults: 1920x1080 for downscaling, 3840x2160 for upscaling
 3. **Image Processing**:
-   - Decodes JPEG images
+   - Decodes JPEG and HEIC images
    - Calculates new dimensions based on specified parameters
    - Uses Lanczos3 algorithm for high-quality image scaling
    - Re-encodes to JPEG format (90% quality)
@@ -134,12 +134,12 @@ Running the program without any parameters will automatically create test images
 ## Technical Features
 
 - **Programming Language**: Go 1.21+
-- **Image Processing**: Uses Go standard library `image` and `image/jpeg` packages, plus `nfnt/resize` for high-quality scaling
+- **Image Processing**: Uses Go standard library `image` and `image/jpeg` packages, plus `jdeng/goheif` for HEIC support and `nfnt/resize` for high-quality scaling
 - **Smart Logic**: Simplified threshold filtering based on scaling ratio comparison
 - **Command Line Parsing**: Uses Go standard library `flag` package
 - **File Operations**: Cross-platform file system operations support
 - **Algorithm**: Lanczos3 interpolation algorithm for image scaling
-- **EXIF Support**: Preserves EXIF metadata using `goexif` library
+- **EXIF Support**: Preserves EXIF metadata for both JPEG and HEIC files using `goexif` and `jdeng/goheif` libraries
 
 ## Performance Notes
 
@@ -149,11 +149,12 @@ Running the program without any parameters will automatically create test images
 
 ## Important Notes
 
-1. **Supported Formats**: Currently only supports JPEG/JPG format
+1. **Supported Formats**: Supports JPEG/JPG and HEIC formats
 2. **Output Quality**: Output JPEG quality is fixed at 90%
-3. **Memory Usage**: Large images will consume more memory
-4. **File Overwriting**: Existing output files will be overwritten
-5. **Directory Structure**: Maintains the relative path structure of input directory
+3. **EXIF Metadata**: EXIF data is preserved for both JPEG and HEIC files
+4. **Memory Usage**: Large images will consume more memory
+5. **File Overwriting**: Existing output files will be overwritten
+6. **Directory Structure**: Maintains the relative path structure of input directory
 
 ## Error Handling
 

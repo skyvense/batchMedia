@@ -7,7 +7,10 @@ import (
 	"image/jpeg"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/jdeng/goheif"
 	"github.com/nfnt/resize"
 	"github.com/rwcarlsen/goexif/exif"
 )
@@ -21,16 +24,40 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 	}
 
 	// Extract EXIF information
-	exifData, err := extractEXIF(fileData)
-	if err != nil {
-		// EXIF extraction failure is not fatal, continue processing
-		fmt.Printf("Warning: unable to extract EXIF information: %v\n", err)
+	var exifData []byte
+	ext := strings.ToLower(filepath.Ext(inputPath))
+	if ext == ".jpg" || ext == ".jpeg" {
+		// Extract EXIF from JPEG files
+		var err error
+		exifData, err = extractEXIF(fileData)
+		if err != nil {
+			// EXIF extraction failure is not fatal, continue processing
+			fmt.Printf("Warning: unable to extract EXIF information from %s: %v\n", inputPath, err)
+		}
+	} else if ext == ".heic" {
+		// Extract EXIF from HEIC files
+		var err error
+		exifData, err = extractHEICExif(fileData)
+		if err != nil {
+			// EXIF extraction failure is not fatal, continue processing
+			fmt.Printf("Warning: unable to extract EXIF information from %s: %v\n", inputPath, err)
+		}
 	}
 
-	// Decode image
-	img, err := jpeg.Decode(bytes.NewReader(fileData))
-	if err != nil {
-		return fmt.Errorf("failed to decode image: %v", err)
+	// Decode image based on file extension
+	var img image.Image
+	if ext == ".heic" {
+		// Decode HEIC image
+		img, err = goheif.Decode(bytes.NewReader(fileData))
+		if err != nil {
+			return fmt.Errorf("failed to decode HEIC image: %v", err)
+		}
+	} else {
+		// Decode JPEG image
+		img, err = jpeg.Decode(bytes.NewReader(fileData))
+		if err != nil {
+			return fmt.Errorf("failed to decode JPEG image: %v", err)
+		}
 	}
 
 	// Get original dimensions
@@ -40,7 +67,21 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 
 	// Check if image should be skipped based on resolution thresholds
 	if shouldSkipImage(originalWidth, originalHeight) {
-		fmt.Printf("Skipping %s: resolution %dx%d is outside threshold range\n", inputPath, originalWidth, originalHeight)
+		fmt.Printf("Skipping %s: resolution %dx%d is outside threshold range (size: %d bytes)\n", inputPath, originalWidth, originalHeight, info.Size())
+		
+		// Record statistics for skipped image
+		stats.SkippedImages++
+		stats.TotalOutputSize += info.Size()
+		
+		// Record file info
+		stats.Files = append(stats.Files, FileInfo{
+			Path:             filepath.Base(inputPath),
+			Type:             "skipped",
+			InputSize:        info.Size(),
+			OutputSize:       info.Size(),
+			CompressionRatio: 1.0,
+		})
+		
 		// Copy original file without processing
 		return copyFile(inputPath, outputPath, info)
 	}
@@ -74,7 +115,25 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 		return fmt.Errorf("failed to set file time: %v", err)
 	}
 
-	fmt.Printf("Processing completed: %s (%dx%d -> %dx%d)\n", inputPath, originalWidth, originalHeight, newWidth, newHeight)
+	// Record statistics
+	outputSize := int64(len(finalImageData))
+	stats.ProcessedImages++
+	stats.TotalOutputSize += outputSize
+	
+	// Calculate compression ratio
+	compressionRatio := float64(outputSize) / float64(info.Size())
+	
+	// Record file info
+	stats.Files = append(stats.Files, FileInfo{
+		Path:             filepath.Base(inputPath),
+		Type:             "processed",
+		InputSize:        info.Size(),
+		OutputSize:       outputSize,
+		CompressionRatio: compressionRatio,
+	})
+
+	fmt.Printf("Processing completed: %s (%dx%d -> %dx%d, %d bytes -> %d bytes, ratio: %.2f)\n", 
+		inputPath, originalWidth, originalHeight, newWidth, newHeight, info.Size(), outputSize, compressionRatio)
 	return nil
 }
 
@@ -152,9 +211,15 @@ func copyFile(src, dst string, info os.FileInfo) error {
 	return os.Chtimes(dst, info.ModTime(), info.ModTime())
 }
 
-// extractEXIF extracts EXIF information from JPEG file data
+// extractEXIF extracts EXIF information from image file data
 func extractEXIF(data []byte) ([]byte, error) {
 	reader := bytes.NewReader(data)
+	
+	// Check if it's a JPEG file by looking at the header
+	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+		// Not a JPEG file (likely HEIC), skip EXIF extraction
+		return nil, fmt.Errorf("EXIF extraction only supported for JPEG files")
+	}
 	
 	// Find EXIF data segment
 	_, err := exif.Decode(reader)
@@ -219,6 +284,19 @@ func extractEXIF(data []byte) ([]byte, error) {
 	}
 	
 	return nil, fmt.Errorf("EXIF data not found")
+}
+
+// extractHEICExif extracts EXIF information from HEIC file data
+func extractHEICExif(data []byte) ([]byte, error) {
+	reader := bytes.NewReader(data)
+	
+	// Use goheif.ExtractExif to extract EXIF from HEIC file
+	exifData, err := goheif.ExtractExif(reader)
+	if err != nil {
+		return nil, err
+	}
+	
+	return exifData, nil
 }
 
 // insertEXIF inserts EXIF data into JPEG file
