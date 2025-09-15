@@ -38,6 +38,13 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 	originalWidth := bounds.Dx()
 	originalHeight := bounds.Dy()
 
+	// Check if image should be skipped based on resolution thresholds
+	if shouldSkipImage(originalWidth, originalHeight) {
+		fmt.Printf("Skipping %s: resolution %dx%d is outside threshold range\n", inputPath, originalWidth, originalHeight)
+		// Copy original file without processing
+		return copyFile(inputPath, outputPath, info)
+	}
+
 	// Calculate new dimensions
 	newWidth, newHeight := calculateNewSize(originalWidth, originalHeight)
 
@@ -80,10 +87,10 @@ func calculateNewSize(originalWidth, originalHeight int) (int, int) {
 		return config.Width, newHeight
 	}
 
-	if config.Size > 0 {
+	if config.ScalingRatio > 0 {
 		// Scale by ratio
-		newWidth := int(float64(originalWidth) * config.Size)
-		newHeight := int(float64(originalHeight) * config.Size)
+		newWidth := int(float64(originalWidth) * config.ScalingRatio)
+		newHeight := int(float64(originalHeight) * config.ScalingRatio)
 		return newWidth, newHeight
 	}
 
@@ -96,6 +103,53 @@ func resizeImage(src image.Image, newWidth, newHeight int) image.Image {
 	// Use Lanczos3 algorithm for high-quality scaling
 	// Lanczos3 provides the best image quality, especially suitable for photo scaling
 	return resize.Resize(uint(newWidth), uint(newHeight), src, resize.Lanczos3)
+}
+
+// shouldSkipImage checks if image should be skipped based on resolution thresholds
+func shouldSkipImage(width, height int) bool {
+	// Apply threshold logic based on scaling type
+	if config.ScalingRatio > 1.0 {
+		// Upscaling: skip images above threshold (too large to upscale)
+		if config.ThresholdWidth > 0 && width > config.ThresholdWidth {
+			return true
+		}
+		if config.ThresholdHeight > 0 && height > config.ThresholdHeight {
+			return true
+		}
+	} else if config.ScalingRatio < 1.0 {
+		// Downscaling: skip images below threshold (too small to downscale)
+		if config.ThresholdWidth > 0 && width < config.ThresholdWidth {
+			return true
+		}
+		if config.ThresholdHeight > 0 && height < config.ThresholdHeight {
+			return true
+		}
+	}
+
+	return false
+}
+
+// copyFile copies a file from source to destination while preserving file info
+func copyFile(src, dst string, info os.FileInfo) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %v", err)
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %v", err)
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %v", err)
+	}
+
+	// Preserve file modification time
+	return os.Chtimes(dst, info.ModTime(), info.ModTime())
 }
 
 // extractEXIF extracts EXIF information from JPEG file data
