@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	ffmpeg "github.com/u2takey/ffmpeg-go"
@@ -91,47 +90,6 @@ func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
 
-	// Build FFmpeg arguments
-	input := ffmpeg.Input(inputPath)
-	output := input
-
-	// Apply video filters and encoding options
-	kwargs := ffmpeg.KwArgs{
-		"c:v": config.VideoCodec,
-		"preset": config.VideoPreset,
-	}
-
-	// Configure codec-specific parameters for QuickTime compatibility
-	if config.VideoCodec == "libx265" {
-		// Preserve HDR metadata for H.265 encoding
-		kwargs["x265-params"] = "hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc"
-		kwargs["color_primaries"] = "bt2020"
-		kwargs["color_trc"] = "smpte2084"
-		kwargs["colorspace"] = "bt2020nc"
-		// Add QuickTime compatibility settings
-		kwargs["pix_fmt"] = "yuv420p10le"
-		kwargs["profile:v"] = "main10"
-		kwargs["level"] = "5.1"
-		kwargs["tag:v"] = "hvc1" // Use hvc1 tag for better QuickTime compatibility
-	} else if config.VideoCodec == "libx264" {
-		// H.264 QuickTime compatibility settings
-		kwargs["pix_fmt"] = "yuv420p"
-		kwargs["profile:v"] = "high"
-		kwargs["level"] = "4.1"
-		kwargs["movflags"] = "+faststart" // Enable fast start for web playback
-	}
-
-	// Use CRF for quality-based encoding (maintains original quality)
-	if config.VideoCRF > 0 {
-		kwargs["crf"] = strconv.Itoa(config.VideoCRF)
-	}
-
-	// Add bitrate if specified (overrides CRF)
-	if config.VideoBitrate != "" {
-		kwargs["b:v"] = config.VideoBitrate
-		delete(kwargs, "crf") // Remove CRF when bitrate is specified
-	}
-
 	// Calculate new dimensions based on same logic as images
 	newWidth := originalWidth
 	newHeight := originalHeight
@@ -151,32 +109,55 @@ func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 		newHeight = int(float64(originalHeight) * float64(config.Width) / float64(originalWidth))
 		scaleFilter = fmt.Sprintf("%d:-1", config.Width)
 	}
+
+	// Build FFmpeg arguments using filter_complex and proper mapping
+	input := ffmpeg.Input(inputPath)
+	var output *ffmpeg.Stream
 	
-	// Preserve all metadata including GPS information
-	kwargs["map_metadata"] = "0"
+	// Use filter_complex for video scaling
+	if scaleFilter != "" {
+		// Apply scale filter using filter_complex
+		output = input.Video().Filter("scale", ffmpeg.Args{scaleFilter})
+	} else {
+		// No scaling, use original video stream
+		output = input.Video()
+	}
+
+	// Apply video encoding options
+	kwargs := ffmpeg.KwArgs{
+		"c:v": "libx265",
+		"preset": "medium",
+		"crf": "23",
+		"profile:v": "main10",
+		"pix_fmt": "yuv420p10le",
+		"tag:v": "hvc1",
+		"color_primaries": "bt2020",
+		"color_trc": "smpte2084",
+		"colorspace": "bt2020nc",
+		"x265-params": "hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+		"level": "5.1",
+		"progress": "pipe:1",
+		"stats": "",
+		"map_metadata": "0",
+	}
 	
-	// Enable detailed FFmpeg logging and progress information
-	kwargs["loglevel"] = "info"
-	kwargs["stats"] = ""
-	kwargs["progress"] = "pipe:1"
-	
-	// Handle audio stream based on whether the video has audio
+	// Handle audio stream
 	if hasAudioStream(inputPath) {
 		// Copy audio stream without re-encoding
 		kwargs["c:a"] = "copy"
 		fmt.Printf("Audio stream detected in %s, will preserve audio\n", inputPath)
+		
+		// Map both video and audio streams
+		err = ffmpeg.Output([]*ffmpeg.Stream{output, input.Audio()}, outputPath, kwargs).OverWriteOutput().Run()
 	} else {
 		// No audio stream, process video only
-		kwargs["an"] = "" // Disable audio
 		fmt.Printf("No audio stream detected in %s, processing video only\n", inputPath)
-	}
-	
-	if scaleFilter != "" {
-		output = output.Filter("scale", ffmpeg.Args{scaleFilter})
+		
+		// Map only video stream
+		err = output.Output(outputPath, kwargs).OverWriteOutput().Run()
 	}
 
 	// Run FFmpeg command
-	err = output.Output(outputPath, kwargs).OverWriteOutput().Run()
 	if err != nil {
 		// If processing fails and video has audio, try with audio re-encoding
 		if hasAudioStream(inputPath) {

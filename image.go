@@ -17,7 +17,7 @@ import (
 )
 
 // processImage processes a single image file
-func processImage(inputPath, outputPath string, info os.FileInfo, dirStats *DirectoryStats) error {
+func processImage(inputPath, outputPath, relPath string, info os.FileInfo, dirStats *DirectoryStats) error {
 	// Read entire file into memory
 	fileData, err := os.ReadFile(inputPath)
 	if err != nil {
@@ -83,15 +83,19 @@ func processImage(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 		// Record statistics for skipped image
 		stats.SkippedImages++
 		stats.TotalOutputSize += info.Size()
+		dirStats.SkippedImages++
+		dirStats.TotalOutputSize += info.Size()
 
 		// Record file info
-		stats.Files = append(stats.Files, FileInfo{
-			Path:             filepath.Base(inputPath),
+		fileInfo := FileInfo{
+			Path:             relPath,
 			Type:             "skipped",
 			InputSize:        info.Size(),
 			OutputSize:       info.Size(),
 			CompressionRatio: 1.0,
-		})
+		}
+		stats.Files = append(stats.Files, fileInfo)
+		dirStats.Files = append(dirStats.Files, fileInfo)
 
 		// Copy original file without processing
 		return copyFile(inputPath, outputPath, info)
@@ -139,9 +143,6 @@ func processImage(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 
 	// Calculate compression ratio
 	compressionRatio := float64(outputSize) / float64(info.Size())
-
-	// Get relative path for file info
-	relPath, _ := filepath.Rel(config.InputDir, inputPath)
 
 	// Record file info
 	fileInfo := FileInfo{

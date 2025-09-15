@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -25,6 +28,113 @@ type Config struct {
 	VideoResolution  string
 	VideoCRF         int
 	VideoPreset      string
+}
+
+// DirectoryProgress represents the processing progress of a directory
+type DirectoryProgress struct {
+	Path      string `json:"path"`
+	Completed bool   `json:"completed"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
+// ProgressTracker manages the processing progress
+type ProgressTracker struct {
+	Directories []DirectoryProgress `json:"directories"`
+	LastUpdate  string              `json:"last_update"`
+}
+
+// loadProgress loads the progress from file
+func loadProgress(progressFile string) (*ProgressTracker, error) {
+	if _, err := os.Stat(progressFile); os.IsNotExist(err) {
+		return &ProgressTracker{Directories: []DirectoryProgress{}}, nil
+	}
+
+	data, err := ioutil.ReadFile(progressFile)
+	if err != nil {
+		return nil, err
+	}
+
+	var tracker ProgressTracker
+	err = json.Unmarshal(data, &tracker)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tracker, nil
+}
+
+// saveProgress saves the progress to file
+func (pt *ProgressTracker) saveProgress(progressFile string) error {
+	pt.LastUpdate = time.Now().Format(time.RFC3339)
+	data, err := json.MarshalIndent(pt, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(progressFile, data, 0644)
+}
+
+// scanDirectories recursively scans for all directories to process
+func scanDirectories(inputDir string) ([]string, error) {
+	var directories []string
+	
+	err := filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		
+		// Skip the root input directory itself
+		if path == inputDir {
+			return nil
+		}
+		
+		// Skip hidden directories
+		if info.IsDir() && strings.HasPrefix(info.Name(), ".") {
+			return filepath.SkipDir
+		}
+		
+		// Add all directories (including nested ones)
+		if info.IsDir() {
+			directories = append(directories, path)
+		}
+		
+		return nil
+	})
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	// Sort directories to process from deepest to shallowest
+	// This ensures we process leaf directories first
+	sort.Slice(directories, func(i, j int) bool {
+		depthI := strings.Count(directories[i], string(filepath.Separator))
+		depthJ := strings.Count(directories[j], string(filepath.Separator))
+		return depthI > depthJ // Deeper directories first
+	})
+	
+	return directories, nil
+}
+
+// markDirectoryCompleted marks a directory as completed in the progress tracker
+func (pt *ProgressTracker) markDirectoryCompleted(dirPath string) {
+	for i := range pt.Directories {
+		if pt.Directories[i].Path == dirPath {
+			pt.Directories[i].Completed = true
+			pt.Directories[i].Timestamp = time.Now().Format(time.RFC3339)
+			return
+		}
+	}
+}
+
+// getUncompletedDirectories returns directories that haven't been completed
+func (pt *ProgressTracker) getUncompletedDirectories() []string {
+	var uncompleted []string
+	for _, dir := range pt.Directories {
+		if !dir.Completed {
+			uncompleted = append(uncompleted, dir.Path)
+		}
+	}
+	return uncompleted
 }
 
 type ProcessStats struct {
@@ -169,7 +279,7 @@ func applySmartDefaults() {
 	}
 }
 
-func processImages() error {
+func processImages(targetDir string) error {
 	// Create output directory
 	if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
@@ -181,6 +291,21 @@ func processImages() error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
+		
+		// Skip files not in target directory (same filter as main processing)
+		if targetDir != "" {
+			// Check if this path is within the target directory
+			if !strings.HasPrefix(path, targetDir) {
+				return nil
+			}
+		}
+		
+		// Skip hidden files (macOS metadata files starting with ._)
+		filename := filepath.Base(path)
+		if strings.HasPrefix(filename, "._") {
+			return nil
+		}
+		
 		ext := strings.ToLower(filepath.Ext(path))
 		isImageSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic" || ext == ".png"
 		isVideoSupported := isVideoFile(path)
@@ -199,7 +324,20 @@ func processImages() error {
 			return err
 		}
 
+		// Skip files not in target directory
+		if targetDir != "" {
+			// Check if this path is within the target directory
+			if !strings.HasPrefix(path, targetDir) {
+				return nil
+			}
+		}
 		if info.IsDir() {
+			return nil
+		}
+
+		// Skip hidden files (macOS metadata files starting with ._)
+		filename := filepath.Base(path)
+		if strings.HasPrefix(filename, "._") {
 			return nil
 		}
 
@@ -261,7 +399,7 @@ func processImages() error {
 			fmt.Printf("[%d/%d] (%.1f%%) Processing image: %s (size: %d bytes)\n", processedCount, totalFilesToProcess, percentage, path, info.Size())
 			stats.TotalInputSize += info.Size()
 			dirStats.TotalInputSize += info.Size()
-			return processImage(path, outputPath, info, dirStats)
+			return processImage(path, outputPath, relPath, info, dirStats)
 		} else {
 			// Copy unsupported files directly
 			fmt.Printf("Copying unsupported file: %s (size: %d bytes)\n", path, info.Size())
@@ -295,45 +433,105 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Progress file path
+	progressFile := filepath.Join(config.OutputDir, "progress.json")
+
+	// Load existing progress
+	tracker, err := loadProgress(progressFile)
+	if err != nil {
+		log.Fatalf("Failed to load progress: %v", err)
+	}
+
+	// Scan directories if progress is empty
+	if len(tracker.Directories) == 0 {
+		fmt.Println("Scanning directories...")
+		directories, err := scanDirectories(config.InputDir)
+		if err != nil {
+			log.Fatalf("Failed to scan directories: %v", err)
+		}
+
+		// If no subdirectories found, process the root directory itself
+		if len(directories) == 0 {
+			directories = append(directories, config.InputDir)
+		}
+		
+		// Initialize progress tracker
+		for _, dir := range directories {
+			tracker.Directories = append(tracker.Directories, DirectoryProgress{
+				Path:      dir,
+				Completed: false,
+			})
+		}
+
+		// Save initial progress
+		if err := tracker.saveProgress(progressFile); err != nil {
+			log.Fatalf("Failed to save initial progress: %v", err)
+		}
+		fmt.Printf("Found %d directories to process\n", len(directories))
+	}
+
+	// Get uncompleted directories
+	uncompletedDirs := tracker.getUncompletedDirectories()
+	if len(uncompletedDirs) == 0 {
+		fmt.Println("All directories have been processed!")
+		return
+	}
+
+	fmt.Printf("Processing %d remaining directories...\n", len(uncompletedDirs))
+
 	// Record start time
 	startTime := time.Now()
 
-	if err := processImages(); err != nil {
-		log.Fatal(err)
+	// Process each directory
+	for i, dirPath := range uncompletedDirs {
+		fmt.Printf("[%d/%d] Processing directory: %s\n", i+1, len(uncompletedDirs), dirPath)
+		
+		// Process this directory
+		if err := processImages(dirPath); err != nil {
+			fmt.Printf("Error processing directory %s: %v\n", dirPath, err)
+			continue
+		}
+		
+		// Mark directory as completed
+		tracker.markDirectoryCompleted(dirPath)
+		
+		// Save progress after each directory
+		if err := tracker.saveProgress(progressFile); err != nil {
+			fmt.Printf("Warning: failed to save progress: %v\n", err)
+		}
+		
+		// Generate HTML report for this directory only
+		for dirPath, dirStats := range stats.DirectoryStats {
+			if len(dirStats.Files) > 0 {
+				if err := generateDirectoryHTMLReport(dirPath, dirStats); err != nil {
+					fmt.Printf("Warning: failed to generate HTML report for directory '%s': %v\n", dirPath, err)
+				}
+			}
+		}
+		
+		// Reset stats for next directory
+		stats = ProcessStats{DirectoryStats: make(map[string]*DirectoryStats)}
+		
+		fmt.Printf("Completed directory: %s\n", dirPath)
 	}
 
 	// Record processing time
-	stats.ProcessingTime = time.Since(startTime).String()
-
-	// Generate HTML reports for each directory
-	for dirPath, dirStats := range stats.DirectoryStats {
-		if len(dirStats.Files) > 0 { // Only generate report if directory has processed files
-			if err := generateDirectoryHTMLReport(dirPath, dirStats); err != nil {
-				fmt.Printf("Warning: failed to generate HTML report for directory '%s': %v\n", dirPath, err)
-			}
-		}
-	}
-
-	// Generate overall HTML report
-	if err := generateHTMLReport(); err != nil {
-		fmt.Printf("Warning: failed to generate overall HTML report: %v\n", err)
-	}
+	processingTime := time.Since(startTime).String()
 
 	fmt.Println("Batch processing completed!")
-	fmt.Printf("Processing summary: %d total files, %d processed, %d copied, %d skipped\n", 
-		stats.TotalFiles, stats.ProcessedImages, stats.CopiedFiles, stats.SkippedImages)
+	fmt.Printf("Total processing time: %s\n", processingTime)
 }
 
 // generateDirectoryHTMLReport generates an HTML report for a specific directory
-func generateDirectoryHTMLReport(dirPath string, dirStats *DirectoryStats) error {
-	// Determine output path for the report
+func generateDirectoryHTMLReport(currentDir string, dirStats *DirectoryStats) error {
+	// Generate report in the output directory corresponding to the current directory
 	var reportPath string
-	if dirPath == "" {
+	if currentDir == "" {
 		// Root directory
 		reportPath = filepath.Join(config.OutputDir, "processing_report.html")
 	} else {
-		// Subdirectory
-		reportPath = filepath.Join(config.OutputDir, dirPath, "processing_report.html")
+		// Subdirectory - create corresponding path in output directory
+		reportPath = filepath.Join(config.OutputDir, currentDir, "processing_report.html")
 	}
 	
 	// Ensure directory exists
@@ -348,10 +546,7 @@ func generateDirectoryHTMLReport(dirPath string, dirStats *DirectoryStats) error
 	}
 	
 	// Generate directory title
-	dirTitle := "Root Directory"
-	if dirPath != "" {
-		dirTitle = fmt.Sprintf("Directory: %s", dirPath)
-	}
+	dirTitle := fmt.Sprintf("Directory: %s", currentDir)
 	
 	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -454,6 +649,19 @@ func generateDirectoryHTMLReport(dirPath string, dirStats *DirectoryStats) error
 		if ext == ".heic" {
 			// HEIC files are converted to JPG, so update the link path
 			actualFilePath = strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".jpg"
+		}
+		
+		// Adjust the file path to be relative to the report location
+		// Calculate relative path from report location to file
+		fileDir := filepath.Dir(actualFilePath)
+		fileName := filepath.Base(actualFilePath)
+		if fileDir == currentDir {
+			// File is in the same directory as the report
+			actualFilePath = fileName
+		} else {
+			// File is in a different directory, use relative path
+			relPath, _ := filepath.Rel(currentDir, actualFilePath)
+			actualFilePath = relPath
 		}
 		
 		// Create thumbnail or placeholder
