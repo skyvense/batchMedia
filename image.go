@@ -93,16 +93,18 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 	resizedImg := resizeImage(img, newWidth, newHeight)
 
 	// Encode image to buffer
+	// Note: Currently all images are encoded as JPEG for compatibility
+	// HEIC encoding is not supported by the goheif library
 	var buf bytes.Buffer
-	options := &jpeg.Options{Quality: 90}
+	options := &jpeg.Options{Quality: 95} // Higher quality for better compatibility
 	if err := jpeg.Encode(&buf, resizedImg, options); err != nil {
 		return fmt.Errorf("failed to encode image: %v", err)
 	}
 
-	// If EXIF data exists, try to insert it into the new image
+	// Get final image data and insert EXIF if available
 	finalImageData := buf.Bytes()
 	if exifData != nil {
-		finalImageData = insertEXIF(finalImageData, exifData)
+		finalImageData = insertEXIFCorrectly(finalImageData, exifData)
 	}
 
 	// Write output file
@@ -299,23 +301,30 @@ func extractHEICExif(data []byte) ([]byte, error) {
 	return exifData, nil
 }
 
-// insertEXIF inserts EXIF data into JPEG file
-func insertEXIF(jpegData, exifData []byte) []byte {
+// insertEXIFCorrectly inserts EXIF data into JPEG file with proper APP1 segment structure
+func insertEXIFCorrectly(jpegData, exifData []byte) []byte {
 	if len(jpegData) < 4 || jpegData[0] != 0xFF || jpegData[1] != 0xD8 {
 		return jpegData // Not a valid JPEG file
 	}
 	
-	// Create new JPEG data
-	result := make([]byte, 0, len(jpegData)+len(exifData))
+	// Create APP1 segment with EXIF data
+	// APP1 marker (0xFFE1) + length (2 bytes) + "Exif\x00\x00" + EXIF data
+	exifHeader := []byte{0xFF, 0xE1} // APP1 marker
+	exifIdentifier := []byte("Exif\x00\x00")
+	segmentLength := uint16(2 + len(exifIdentifier) + len(exifData))
 	
-	// Add JPEG file header
-	result = append(result, jpegData[0:2]...)
+	// Build complete APP1 segment
+	app1Segment := make([]byte, 0, 4+len(exifIdentifier)+len(exifData))
+	app1Segment = append(app1Segment, exifHeader...)
+	app1Segment = append(app1Segment, byte(segmentLength>>8), byte(segmentLength&0xFF)) // Big-endian length
+	app1Segment = append(app1Segment, exifIdentifier...)
+	app1Segment = append(app1Segment, exifData...)
 	
-	// Add EXIF data
-	result = append(result, exifData...)
-	
-	// Add remaining JPEG data (skip file header)
-	result = append(result, jpegData[2:]...)
+	// Insert APP1 segment after SOI marker (0xFFD8)
+	result := make([]byte, 0, len(jpegData)+len(app1Segment))
+	result = append(result, jpegData[0:2]...) // SOI marker
+	result = append(result, app1Segment...)   // APP1 segment with EXIF
+	result = append(result, jpegData[2:]...)  // Rest of JPEG data
 	
 	return result
 }

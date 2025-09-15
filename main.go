@@ -18,6 +18,13 @@ type Config struct {
 	ThresholdWidth   int
 	ThresholdHeight  int
 	IgnoreSmartLimit bool
+	// Video processing options
+	VideoEnabled     bool
+	VideoCodec       string
+	VideoBitrate     string
+	VideoResolution  string
+	VideoCRF         int
+	VideoPreset      string
 }
 
 type ProcessStats struct {
@@ -52,6 +59,13 @@ func init() {
 	flag.IntVar(&config.ThresholdWidth, "threshold-width", 0, "Width threshold (default: 1920 for downscaling, 3840 for upscaling)")
 	flag.IntVar(&config.ThresholdHeight, "threshold-height", 0, "Height threshold (default: 1080 for downscaling, 2160 for upscaling)")
 	flag.BoolVar(&config.IgnoreSmartLimit, "ignore-smart-limit", false, "Ignore smart default resolution limits")
+	// Video processing flags
+	flag.BoolVar(&config.VideoEnabled, "video", false, "Enable video processing")
+	flag.StringVar(&config.VideoCodec, "video-codec", "libx265", "Video codec (libx264, libx265, etc.)")
+	flag.StringVar(&config.VideoBitrate, "video-bitrate", "", "Video bitrate (e.g., 2M, 1000k)")
+	flag.StringVar(&config.VideoResolution, "video-resolution", "", "Video resolution (e.g., 1920x1080, 1280x720)")
+	flag.IntVar(&config.VideoCRF, "video-crf", 23, "Video CRF quality (0-51, lower is better quality)")
+	flag.StringVar(&config.VideoPreset, "video-preset", "medium", "Video encoding preset (ultrafast, fast, medium, slow, veryslow)")
 }
 
 func validateConfig() error {
@@ -159,7 +173,8 @@ func processImages() error {
 
 		// Check file extension
 		ext := strings.ToLower(filepath.Ext(path))
-		isSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic"
+		isImageSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic"
+		isVideoSupported := isVideoFile(path) // Auto-enable video processing when video files are detected
 		
 		// Calculate relative path
 		relPath, err := filepath.Rel(config.InputDir, path)
@@ -170,6 +185,11 @@ func processImages() error {
 		// Build output path
 		outputPath := filepath.Join(config.OutputDir, relPath)
 		
+		// Convert HEIC files to JPEG extension since we encode them as JPEG
+		if strings.ToLower(filepath.Ext(path)) == ".heic" {
+			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".jpg"
+		}
+		
 		// Ensure output directory exists
 		outputDir := filepath.Dir(outputPath)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -178,7 +198,17 @@ func processImages() error {
 		
 		stats.TotalFiles++
 		
-		if !isSupported {
+		if isVideoSupported {
+			// Process video file
+			fmt.Printf("Processing video: %s (size: %d bytes)\n", path, info.Size())
+			stats.TotalInputSize += info.Size()
+			return processVideo(path, outputPath, info)
+		} else if isImageSupported {
+			// Process image file
+			fmt.Printf("Processing image: %s (size: %d bytes)\n", path, info.Size())
+			stats.TotalInputSize += info.Size()
+			return processImage(path, outputPath, info)
+		} else {
 			// Copy unsupported files directly
 			fmt.Printf("Copying unsupported file: %s (size: %d bytes)\n", path, info.Size())
 			stats.CopiedFiles++
@@ -196,12 +226,6 @@ func processImages() error {
 			
 			return copyFile(path, outputPath, info)
 		}
-
-		fmt.Printf("Processing file: %s (size: %d bytes)\n", path, info.Size())
-		stats.TotalInputSize += info.Size()
-
-		// Process image
-		return processImage(path, outputPath, info)
 	})
 }
 
