@@ -123,22 +123,52 @@ func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 		output = input.Video()
 	}
 
-	// Apply video encoding options
-	kwargs := ffmpeg.KwArgs{
-		"c:v": "libx265",
-		"preset": "medium",
-		"crf": "23",
-		"profile:v": "main10",
-		"pix_fmt": "yuv420p10le",
-		"tag:v": "hvc1",
-		"color_primaries": "bt2020",
-		"color_trc": "smpte2084",
-		"colorspace": "bt2020nc",
-		"x265-params": "hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
-		"level": "5.1",
-		"progress": "pipe:1",
-		"stats": "",
-		"map_metadata": "0",
+	// Check if input video is HDR
+	isHDR := isHDRVideo(inputPath)
+	
+	// Apply video encoding options based on HDR detection
+	var kwargs ffmpeg.KwArgs
+	
+	if isHDR {
+		// HDR video encoding parameters
+		kwargs = ffmpeg.KwArgs{
+			"c:v": config.VideoCodec,
+			"preset": config.VideoPreset,
+			"crf": fmt.Sprintf("%d", config.VideoCRF),
+			"profile:v": "main10",
+			"pix_fmt": "yuv420p10le",
+			"tag:v": "hvc1",
+			"color_primaries": "bt2020",
+			"color_trc": "smpte2084",
+			"colorspace": "bt2020nc",
+			"x265-params": "hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+			"level": "5.1",
+			"progress": "pipe:1",
+			"stats": "",
+			"map_metadata": "0",
+		}
+		fmt.Printf("Processing HDR video: %s\n", inputPath)
+	} else {
+		// SDR video encoding parameters (standard rec709 colorspace)
+		kwargs = ffmpeg.KwArgs{
+			"c:v": config.VideoCodec,
+			"preset": config.VideoPreset,
+			"crf": fmt.Sprintf("%d", config.VideoCRF),
+			"profile:v": "main",
+			"pix_fmt": "yuv420p",
+			"tag:v": "hvc1",
+			"level": "4.0",
+			"progress": "pipe:1",
+			"stats": "",
+			"map_metadata": "0",
+		}
+		fmt.Printf("Processing SDR video: %s\n", inputPath)
+	}
+	
+	// Apply user-specified bitrate if provided
+	if config.VideoBitrate != "" {
+		kwargs["b:v"] = config.VideoBitrate
+		delete(kwargs, "crf") // Remove CRF when using bitrate
 	}
 	
 	// Handle audio stream
@@ -219,6 +249,33 @@ func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 	fmt.Printf("Video processing completed: %s (%d bytes -> %d bytes, ratio: %.2f)\n", 
 		inputPath, info.Size(), outputSize, compressionRatio)
 	return nil
+}
+
+// isHDRVideo checks if the video file is HDR format
+func isHDRVideo(inputPath string) bool {
+	probe, err := ffmpeg.Probe(inputPath)
+	if err != nil {
+		return false // Assume SDR if probe fails
+	}
+	
+	// Check for HDR indicators in the probe output
+	// HDR videos typically have:
+	// - color_primaries: bt2020
+	// - color_trc: smpte2084 (PQ) or arib-std-b67 (HLG)
+	// - colorspace: bt2020nc or bt2020c
+	probeStr := strings.ToLower(probe)
+	
+	// Check for HDR transfer characteristics
+	hasHDRTransfer := strings.Contains(probeStr, "smpte2084") || 
+					 strings.Contains(probeStr, "arib-std-b67") ||
+					 strings.Contains(probeStr, "smpte-st-2084") ||
+					 strings.Contains(probeStr, "hlg")
+	
+	// Check for wide color gamut
+	hasWideGamut := strings.Contains(probeStr, "bt2020")
+	
+	// Consider it HDR if it has both HDR transfer and wide gamut
+	return hasHDRTransfer && hasWideGamut
 }
 
 // hasAudioStream checks if the video file contains audio streams
