@@ -1,19 +1,19 @@
-# batchMedia - 批量媒体处理工具
+# batchMedia - Batch Media Processing Tool
 
-一个用Go语言编写的命令行工具，专门用于批量处理JPEG图片文件。支持按比例或指定宽度调整图片大小，同时保留原文件的修改日期。
+A command-line tool written in Go for batch processing JPEG image files. Supports resizing images by ratio or specified width while preserving original file modification dates.
 
-## 功能特性
+## Features
 
-- 🖼️ 支持批量处理JPEG/JPG格式图片
-- 📏 支持两种缩放模式：按比例缩放和按宽度缩放
-- 📅 保留原文件的修改日期
-- 📁 支持递归处理子目录
-- 🚀 使用Go标准库，无外部依赖
-- ⚡ 高性能批量处理
+- 🖼️ Batch processing of JPEG/JPG format images
+- 📏 Two scaling modes: proportional scaling and width-based scaling
+- 📅 Preserves original file modification dates
+- 📁 Recursive processing of subdirectories
+- 🚀 Uses Go standard library with minimal external dependencies
+- ⚡ High-performance batch processing
 
-## 安装
+## Installation
 
-### 从源码编译
+### Build from Source
 
 ```bash
 git clone <repository-url>
@@ -21,105 +21,107 @@ cd batchMedia
 go build -o batchMedia
 ```
 
-## 使用方法
+## Usage
 
-### 基本语法
+### Basic Syntax
 
 ```bash
-./batchMedia -inputdir=<输入目录> -out=<输出目录> [缩放选项]
+./batchMedia -inputdir=<input_directory> -out=<output_directory> [scaling_options]
 ```
 
-### 缩放选项
+### Scaling Options
 
-- `-size=<比例>`: 按比例缩放（例如：0.5表示缩小到50%）
-- `-width=<像素>`: 按指定宽度缩放，自动保持宽高比
+- `-size=<ratio>`: Scale by ratio (e.g., 0.5 means scale down to 50%)
+- `-width=<pixels>`: Scale by specified width, automatically maintains aspect ratio
 
-**注意：`-size` 和 `-width` 参数不能同时使用**
+**Note: `-size` and `-width` parameters cannot be used simultaneously**
 
-### 使用示例
+### Usage Examples
 
-#### 1. 按比例缩放
-将图片缩小到原尺寸的50%：
+#### 1. Scale by Ratio
+Scale images down to 50% of original size:
 ```bash
 ./batchMedia -inputdir=./photos/2019 -out=./photos/2019_resized -size=0.5
 ```
 
-#### 2. 按宽度缩放
-将图片宽度调整为1920像素，高度自动按比例调整：
+#### 2. Scale by Width
+Resize image width to 1920 pixels, height automatically adjusted proportionally:
 ```bash
 ./batchMedia -inputdir=./photos/2019 -out=./photos/2019_1920 -width=1920
 ```
 
-#### 3. 创建测试图片
-不带任何参数运行程序会自动创建测试图片：
+
+#### 3. Create Test Images
+Running the program without any parameters will automatically create test images:
 ```bash
 ./batchMedia
 ```
 
-### 参数说明
+### Parameter Description
 
-| 参数 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `-inputdir` | string | 是 | 输入目录路径，包含要处理的JPEG文件 |
-| `-out` | string | 是 | 输出目录路径，处理后的文件保存位置 |
-| `-size` | float | 否 | 缩放比例，范围0-10（与-width互斥） |
-| `-width` | int | 否 | 目标宽度像素值（与-size互斥） |
-| `-h` | - | 否 | 显示帮助信息 |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `-inputdir` | string | Yes | Input directory path containing JPEG files to process |
+| `-out` | string | Yes | Output directory path where processed files will be saved |
+| `-size` | float | No | Scaling ratio, range 0-10 (mutually exclusive with -width) |
+| `-width` | int | No | Target width in pixels (mutually exclusive with -size) |
+| `-h` | - | No | Display help information |
 
-## 工作原理
+## How It Works
 
-1. **文件发现**：递归扫描输入目录，查找所有`.jpg`和`.jpeg`文件
-2. **图片处理**：
-   - 解码JPEG图片
-   - 根据指定参数计算新尺寸
-   - 使用最近邻算法进行图片缩放
-   - 重新编码为JPEG格式（质量90%）
-3. **文件保存**：
-   - 保持原有的目录结构
-   - 保留原文件的修改时间
-   - 自动创建必要的输出目录
+1. **File Discovery**: Recursively scans input directory to find all `.jpg` and `.jpeg` files
+2. **Image Processing**:
+   - Decodes JPEG images
+   - Calculates new dimensions based on specified parameters
+   - Uses Lanczos3 algorithm for high-quality image scaling
+   - Re-encodes to JPEG format (90% quality)
+3. **File Saving**:
+   - Maintains original directory structure
+   - Preserves original file modification times
+   - Automatically creates necessary output directories
 
-## 技术特性
+## Technical Features
 
-- **编程语言**：Go 1.21+
-- **图片处理**：使用Go标准库`image`和`image/jpeg`包
-- **命令行解析**：使用Go标准库`flag`包
-- **文件操作**：支持跨平台文件系统操作
-- **算法**：最近邻插值算法进行图片缩放
+- **Programming Language**: Go 1.21+
+- **Image Processing**: Uses Go standard library `image` and `image/jpeg` packages, plus `nfnt/resize` for high-quality scaling
+- **Command Line Parsing**: Uses Go standard library `flag` package
+- **File Operations**: Cross-platform file system operations support
+- **Algorithm**: Lanczos3 interpolation algorithm for image scaling
+- **EXIF Support**: Preserves EXIF metadata using `goexif` library
 
-## 性能说明
+## Performance Notes
 
-- 使用内存中的图片处理，适合中等大小的图片批量处理
-- 对于超大图片文件，建议分批处理以避免内存不足
-- 处理速度取决于图片大小和数量，以及系统性能
+- Uses in-memory image processing, suitable for batch processing of medium-sized images
+- For very large image files, recommend batch processing to avoid memory shortage
+- Processing speed depends on image size, quantity, and system performance
 
-## 注意事项
+## Important Notes
 
-1. **支持格式**：目前仅支持JPEG/JPG格式
-2. **输出质量**：输出JPEG质量固定为90%
-3. **内存使用**：大图片会占用较多内存
-4. **文件覆盖**：如果输出文件已存在，会被覆盖
-5. **目录结构**：会保持输入目录的相对路径结构
+1. **Supported Formats**: Currently only supports JPEG/JPG format
+2. **Output Quality**: Output JPEG quality is fixed at 90%
+3. **Memory Usage**: Large images will consume more memory
+4. **File Overwriting**: Existing output files will be overwritten
+5. **Directory Structure**: Maintains the relative path structure of input directory
 
-## 错误处理
+## Error Handling
 
-程序会在以下情况报错并退出：
-- 输入目录不存在
-- 缺少必需参数
-- 同时指定size和width参数
-- 参数值超出有效范围
-- 文件读写权限不足
+The program will report errors and exit in the following situations:
+- Input directory does not exist
+- Missing required parameters
+- Both size and width parameters specified simultaneously
+- Parameter values outside valid range
+- Insufficient file read/write permissions
 
-## 示例输出
+## Sample Output
 
 ```
-处理文件: photos/2019/IMG_001.jpg
-处理完成: photos/2019/IMG_001.jpg (4032x3024 -> 2016x1512)
-处理文件: photos/2019/IMG_002.jpg
-处理完成: photos/2019/IMG_002.jpg (3840x2160 -> 1920x1080)
-批量处理完成！
+Processing file: photos/2019/IMG_001.jpg
+Processing completed: photos/2019/IMG_001.jpg (4032x3024 -> 2016x1512)
+Processing file: photos/2019/IMG_002.jpg
+Processing completed: photos/2019/IMG_002.jpg (3840x2160 -> 1920x1080)
+Batch processing completed!
 ```
 
-## 许可证
+## License
 
-本项目采用MIT许可证。
+This project is licensed under the MIT License.

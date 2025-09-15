@@ -19,52 +19,52 @@ type Config struct {
 var config Config
 
 func init() {
-	flag.StringVar(&config.InputDir, "inputdir", "", "输入目录路径 (必需)")
-	flag.StringVar(&config.OutputDir, "out", "", "输出目录路径 (必需)")
-	flag.Float64Var(&config.Size, "size", 0, "缩放比例 (例如: 0.5表示缩小到50%)")
-	flag.IntVar(&config.Width, "width", 0, "目标宽度 (像素)")
+	flag.StringVar(&config.InputDir, "inputdir", "", "Input directory path (required)")
+	flag.StringVar(&config.OutputDir, "out", "", "Output directory path (required)")
+	flag.Float64Var(&config.Size, "size", 0, "Scaling ratio (e.g., 0.5 means scale to 50%)")
+	flag.IntVar(&config.Width, "width", 0, "Target width (pixels)")
 }
 
 func validateConfig() error {
 	if config.InputDir == "" {
-		return fmt.Errorf("输入目录不能为空")
+		return fmt.Errorf("input directory cannot be empty")
 	}
 
 	if config.OutputDir == "" {
-		return fmt.Errorf("输出目录不能为空")
+		return fmt.Errorf("output directory cannot be empty")
 	}
 
 	if config.Size == 0 && config.Width == 0 {
-		return fmt.Errorf("必须指定 --size 或 --width 参数")
+		return fmt.Errorf("must specify either --size or --width parameter")
 	}
 
 	if config.Size != 0 && config.Width != 0 {
-		return fmt.Errorf("--size 和 --width 参数不能同时使用")
+		return fmt.Errorf("--size and --width parameters cannot be used simultaneously")
 	}
 
 	if config.Size != 0 && (config.Size <= 0 || config.Size > 10) {
-		return fmt.Errorf("--size 参数必须在 0 到 10 之间")
+		return fmt.Errorf("--size parameter must be between 0 and 10")
 	}
 
 	if config.Width != 0 && config.Width <= 0 {
-		return fmt.Errorf("--width 参数必须大于 0")
+		return fmt.Errorf("--width parameter must be greater than 0")
 	}
 
-	// 检查输入目录是否存在
+	// Check if input directory exists
 	if _, err := os.Stat(config.InputDir); os.IsNotExist(err) {
-		return fmt.Errorf("输入目录不存在: %s", config.InputDir)
+		return fmt.Errorf("input directory does not exist: %s", config.InputDir)
 	}
 
 	return nil
 }
 
 func processImages() error {
-	// 创建输出目录
+	// Create output directory
 	if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
-		return fmt.Errorf("创建输出目录失败: %v", err)
+		return fmt.Errorf("failed to create output directory: %v", err)
 	}
 
-	// 遍历输入目录中的JPEG文件
+	// Walk through JPEG files in input directory
 	return filepath.Walk(config.InputDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -74,30 +74,30 @@ func processImages() error {
 			return nil
 		}
 
-		// 检查是否为JPEG文件
+		// Check if it's a JPEG file
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".jpg" && ext != ".jpeg" {
 			return nil
 		}
 
-		fmt.Printf("处理文件: %s\n", path)
+		fmt.Printf("Processing file: %s\n", path)
 
-		// 计算相对路径
+		// Calculate relative path
 		relPath, err := filepath.Rel(config.InputDir, path)
 		if err != nil {
 			return err
 		}
 
-		// 构建输出路径
+		// Build output path
 		outputPath := filepath.Join(config.OutputDir, relPath)
 
-		// 确保输出目录存在
+		// Ensure output directory exists
 		outputDir := filepath.Dir(outputPath)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
 			return err
 		}
 
-		// 处理图片
+		// Process image
 		return processImage(path, outputPath, info)
 	})
 }
@@ -113,5 +113,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("批量处理完成！")
+	fmt.Println("Batch processing completed!")
 }

@@ -12,115 +12,115 @@ import (
 	"github.com/rwcarlsen/goexif/exif"
 )
 
-// processImage 处理单个图片文件
+// processImage processes a single image file
 func processImage(inputPath, outputPath string, info os.FileInfo) error {
-	// 读取整个文件到内存
+	// Read entire file into memory
 	fileData, err := os.ReadFile(inputPath)
 	if err != nil {
-		return fmt.Errorf("读取输入文件失败: %v", err)
+		return fmt.Errorf("failed to read input file: %v", err)
 	}
 
-	// 提取EXIF信息
+	// Extract EXIF information
 	exifData, err := extractEXIF(fileData)
 	if err != nil {
-		// EXIF提取失败不是致命错误，继续处理
-		fmt.Printf("警告: 无法提取EXIF信息: %v\n", err)
+		// EXIF extraction failure is not fatal, continue processing
+		fmt.Printf("Warning: unable to extract EXIF information: %v\n", err)
 	}
 
-	// 解码图片
+	// Decode image
 	img, err := jpeg.Decode(bytes.NewReader(fileData))
 	if err != nil {
-		return fmt.Errorf("解码图片失败: %v", err)
+		return fmt.Errorf("failed to decode image: %v", err)
 	}
 
-	// 获取原始尺寸
+	// Get original dimensions
 	bounds := img.Bounds()
 	originalWidth := bounds.Dx()
 	originalHeight := bounds.Dy()
 
-	// 计算新尺寸
+	// Calculate new dimensions
 	newWidth, newHeight := calculateNewSize(originalWidth, originalHeight)
 
-	// 调整图片大小
+	// Resize image
 	resizedImg := resizeImage(img, newWidth, newHeight)
 
-	// 编码图片到缓冲区
+	// Encode image to buffer
 	var buf bytes.Buffer
 	options := &jpeg.Options{Quality: 90}
 	if err := jpeg.Encode(&buf, resizedImg, options); err != nil {
-		return fmt.Errorf("编码图片失败: %v", err)
+		return fmt.Errorf("failed to encode image: %v", err)
 	}
 
-	// 如果有EXIF数据，尝试将其插入到新图片中
+	// If EXIF data exists, try to insert it into the new image
 	finalImageData := buf.Bytes()
 	if exifData != nil {
 		finalImageData = insertEXIF(finalImageData, exifData)
 	}
 
-	// 写入输出文件
+	// Write output file
 	if err := os.WriteFile(outputPath, finalImageData, 0644); err != nil {
-		return fmt.Errorf("写入输出文件失败: %v", err)
+		return fmt.Errorf("failed to write output file: %v", err)
 	}
 
-	// 保留原文件的修改时间
+	// Preserve original file modification time
 	if err := os.Chtimes(outputPath, info.ModTime(), info.ModTime()); err != nil {
-		return fmt.Errorf("设置文件时间失败: %v", err)
+		return fmt.Errorf("failed to set file time: %v", err)
 	}
 
-	fmt.Printf("处理完成: %s (%dx%d -> %dx%d)\n", inputPath, originalWidth, originalHeight, newWidth, newHeight)
+	fmt.Printf("Processing completed: %s (%dx%d -> %dx%d)\n", inputPath, originalWidth, originalHeight, newWidth, newHeight)
 	return nil
 }
 
-// calculateNewSize 根据配置计算新的图片尺寸
+// calculateNewSize calculates new image dimensions based on configuration
 func calculateNewSize(originalWidth, originalHeight int) (int, int) {
 	if config.Width > 0 {
-		// 按宽度缩放，保持宽高比
+		// Scale by width, maintain aspect ratio
 		ratio := float64(config.Width) / float64(originalWidth)
 		newHeight := int(float64(originalHeight) * ratio)
 		return config.Width, newHeight
 	}
 
 	if config.Size > 0 {
-		// 按比例缩放
+		// Scale by ratio
 		newWidth := int(float64(originalWidth) * config.Size)
 		newHeight := int(float64(originalHeight) * config.Size)
 		return newWidth, newHeight
 	}
 
-	// 默认返回原尺寸
+	// Default return original dimensions
 	return originalWidth, originalHeight
 }
 
-// resizeImage 使用简单的最近邻算法调整图片大小
+// resizeImage resizes image using high-quality algorithm
 func resizeImage(src image.Image, newWidth, newHeight int) image.Image {
-	// 使用Lanczos3算法进行高质量缩放
-	// Lanczos3提供了最佳的图像质量，特别适合照片缩放
+	// Use Lanczos3 algorithm for high-quality scaling
+	// Lanczos3 provides the best image quality, especially suitable for photo scaling
 	return resize.Resize(uint(newWidth), uint(newHeight), src, resize.Lanczos3)
 }
 
-// extractEXIF 从JPEG文件数据中提取EXIF信息
+// extractEXIF extracts EXIF information from JPEG file data
 func extractEXIF(data []byte) ([]byte, error) {
 	reader := bytes.NewReader(data)
 	
-	// 查找EXIF数据段
+	// Find EXIF data segment
 	_, err := exif.Decode(reader)
 	if err != nil {
 		return nil, err
 	}
 	
-	// 查找APP1段（EXIF数据）
+	// Find APP1 segment (EXIF data)
 	reader.Seek(0, 0)
 	buf := make([]byte, 2)
 	
-	// 检查JPEG文件头
+	// Check JPEG file header
 	if _, err := reader.Read(buf); err != nil {
 		return nil, err
 	}
 	if buf[0] != 0xFF || buf[1] != 0xD8 {
-		return nil, fmt.Errorf("不是有效的JPEG文件")
+		return nil, fmt.Errorf("not a valid JPEG file")
 	}
 	
-	// 查找APP1段
+	// Find APP1 segment
 	for {
 		if _, err := reader.Read(buf); err != nil {
 			return nil, err
@@ -130,15 +130,15 @@ func extractEXIF(data []byte) ([]byte, error) {
 			continue
 		}
 		
-		// 找到APP1段
+		// Found APP1 segment
 		if buf[1] == 0xE1 {
-			// 读取段长度
+			// Read segment length
 			if _, err := reader.Read(buf); err != nil {
 				return nil, err
 			}
 			length := int(buf[0])<<8 | int(buf[1])
 			
-			// 读取整个APP1段
+			// Read entire APP1 segment
 			exifSegment := make([]byte, length+2) // +2 for marker
 			exifSegment[0] = 0xFF
 			exifSegment[1] = 0xE1
@@ -152,7 +152,7 @@ func extractEXIF(data []byte) ([]byte, error) {
 			return exifSegment, nil
 		}
 		
-		// 如果是其他段，跳过
+		// If it's another segment, skip it
 		if buf[1] >= 0xE0 && buf[1] <= 0xEF {
 			if _, err := reader.Read(buf); err != nil {
 				return nil, err
@@ -164,25 +164,25 @@ func extractEXIF(data []byte) ([]byte, error) {
 		}
 	}
 	
-	return nil, fmt.Errorf("未找到EXIF数据")
+	return nil, fmt.Errorf("EXIF data not found")
 }
 
-// insertEXIF 将EXIF数据插入到JPEG文件中
+// insertEXIF inserts EXIF data into JPEG file
 func insertEXIF(jpegData, exifData []byte) []byte {
 	if len(jpegData) < 4 || jpegData[0] != 0xFF || jpegData[1] != 0xD8 {
-		return jpegData // 不是有效的JPEG文件
+		return jpegData // Not a valid JPEG file
 	}
 	
-	// 创建新的JPEG数据
+	// Create new JPEG data
 	result := make([]byte, 0, len(jpegData)+len(exifData))
 	
-	// 添加JPEG文件头
+	// Add JPEG file header
 	result = append(result, jpegData[0:2]...)
 	
-	// 添加EXIF数据
+	// Add EXIF data
 	result = append(result, exifData...)
 	
-	// 添加剩余的JPEG数据（跳过文件头）
+	// Add remaining JPEG data (skip file header)
 	result = append(result, jpegData[2:]...)
 	
 	return result
