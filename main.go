@@ -173,7 +173,7 @@ func processImages() error {
 
 		// Check file extension
 		ext := strings.ToLower(filepath.Ext(path))
-		isImageSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic"
+		isImageSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic" || ext == ".png"
 		isVideoSupported := isVideoFile(path) // Auto-enable video processing when video files are detected
 		
 		// Calculate relative path
@@ -268,20 +268,38 @@ func generateHTMLReport() error {
     <title>Batch Media Processing Report</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
-        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1 { color: #333; text-align: center; }
         .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
         .stat-card { background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center; }
         .stat-number { font-size: 24px; font-weight: bold; color: #007bff; }
         .stat-label { color: #666; margin-top: 5px; }
-        table { width: 100%%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f8f9fa; font-weight: bold; }
-        .processed { color: #28a745; }
-        .copied { color: #ffc107; }
-        .skipped { color: #6c757d; }
-        .size { text-align: right; }
-        .ratio { text-align: center; }
+        
+        /* Grid layout for files */
+        .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
+        .file-card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: transform 0.2s; }
+        .file-card:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
+        
+        .file-header { display: flex; align-items: center; margin-bottom: 10px; }
+        .file-name { font-weight: bold; color: #333; text-decoration: none; flex: 1; }
+        .file-name:hover { color: #007bff; }
+        .file-type { padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
+        .processed { background: #d4edda; color: #155724; }
+        .video_processed { background: #d1ecf1; color: #0c5460; }
+        .copied { background: #fff3cd; color: #856404; }
+        .skipped { background: #f8d7da; color: #721c24; }
+        
+        .thumbnail { width: 100%%; height: 200px; object-fit: cover; border-radius: 5px; margin: 10px 0; background: #f8f9fa; display: flex; align-items: center; justify-content: center; color: #666; }
+        .video-placeholder { background: #e9ecef; border: 2px dashed #adb5bd; }
+        
+        .file-details { font-size: 14px; color: #666; }
+        .detail-row { display: flex; justify-content: space-between; margin: 5px 0; }
+        .detail-label { font-weight: 500; }
+        
+        .size-info { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
+        .compression-ratio { font-weight: bold; color: #28a745; }
+        
+        h2 { color: #333; margin-top: 30px; }
     </style>
 </head>
 <body>
@@ -323,18 +341,8 @@ func generateHTMLReport() error {
             </div>
         </div>
         
-        <h2>File Details</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>File</th>
-                    <th>Type</th>
-                    <th>Input Size</th>
-                    <th>Output Size</th>
-                    <th>Compression Ratio</th>
-                </tr>
-            </thead>
-            <tbody>`,
+        <h2>Processed Files</h2>
+        <div class="files-grid">`,
 		stats.TotalFiles,
 		stats.ProcessedImages,
 		stats.CopiedFiles,
@@ -344,27 +352,75 @@ func generateHTMLReport() error {
 		(1.0-float64(stats.TotalOutputSize)/float64(stats.TotalInputSize))*100,
 		stats.ProcessingTime)
 	
-	// Add file details
+	// Add file cards
 	for _, file := range stats.Files {
+		// Determine if it's an image file for thumbnail
+		filePath := file.Path
+		ext := strings.ToLower(filepath.Ext(filePath))
+		isImage := ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".heic"
+		isVideo := strings.Contains(file.Type, "video") || ext == ".mov" || ext == ".mp4" || ext == ".avi" || ext == ".mkv"
+		
+		// Handle HEIC files that were converted to JPG
+		actualFilePath := filePath
+		if ext == ".heic" {
+			// HEIC files are converted to JPG, so update the link path
+			actualFilePath = strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".jpg"
+		}
+		
+		// Create thumbnail or placeholder
+		var thumbnailHTML string
+		if isImage {
+			thumbnailHTML = fmt.Sprintf(`<img src="%s" alt="%s" class="thumbnail" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"><div class="thumbnail" style="display:none;">📷 Image Preview</div>`, actualFilePath, actualFilePath)
+		} else if isVideo {
+			thumbnailHTML = `<div class="thumbnail video-placeholder">🎬 Video File</div>`
+		} else {
+			thumbnailHTML = `<div class="thumbnail">📄 File</div>`
+		}
+		
 		htmlContent += fmt.Sprintf(`
-                <tr>
-                    <td>%s</td>
-                    <td class="%s">%s</td>
-                    <td class="size">%.1f KB</td>
-                    <td class="size">%.1f KB</td>
-                    <td class="ratio">%.2f</td>
-                </tr>`,
-			file.Path,
+            <div class="file-card">
+                <div class="file-header">
+                    <a href="%s" class="file-name" target="_blank">%s</a>
+                    <span class="file-type %s">%s</span>
+                </div>
+                %s
+                <div class="file-details">
+                    <div class="detail-row">
+                        <span class="detail-label">Original Size:</span>
+                        <span>%.1f KB</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Output Size:</span>
+                        <span>%.1f KB</span>
+                    </div>`,
+			actualFilePath,
+			filePath,
 			file.Type,
 			file.Type,
+			thumbnailHTML,
 			float64(file.InputSize)/1024,
-			float64(file.OutputSize)/1024,
-			file.CompressionRatio)
+			float64(file.OutputSize)/1024)
+		
+		// Add dimension info if available
+		if file.OriginalDim != "" && file.NewDim != "" {
+			htmlContent += fmt.Sprintf(`
+                    <div class="detail-row">
+                        <span class="detail-label">Dimensions:</span>
+                        <span>%s → %s</span>
+                    </div>`, file.OriginalDim, file.NewDim)
+		}
+		
+		htmlContent += fmt.Sprintf(`
+                </div>
+                <div class="size-info">
+                    <span>Compression Ratio:</span>
+                    <span class="compression-ratio">%.2f</span>
+                </div>
+            </div>`, file.CompressionRatio)
 	}
 	
 	htmlContent += `
-            </tbody>
-        </table>
+        </div>
     </div>
 </body>
 </html>`

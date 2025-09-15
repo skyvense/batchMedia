@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -43,6 +44,7 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 			fmt.Printf("Warning: unable to extract EXIF information from %s: %v\n", inputPath, err)
 		}
 	}
+	// Note: PNG files typically don't contain EXIF data, so no extraction needed
 
 	// Decode image based on file extension
 	var img image.Image
@@ -51,6 +53,12 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 		img, err = goheif.Decode(bytes.NewReader(fileData))
 		if err != nil {
 			return fmt.Errorf("failed to decode HEIC image: %v", err)
+		}
+	} else if ext == ".png" {
+		// Decode PNG image
+		img, err = png.Decode(bytes.NewReader(fileData))
+		if err != nil {
+			return fmt.Errorf("failed to decode PNG image: %v", err)
 		}
 	} else {
 		// Decode JPEG image
@@ -68,11 +76,11 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 	// Check if image should be skipped based on resolution thresholds
 	if shouldSkipImage(originalWidth, originalHeight) {
 		fmt.Printf("Skipping %s: resolution %dx%d is outside threshold range (size: %d bytes)\n", inputPath, originalWidth, originalHeight, info.Size())
-		
+
 		// Record statistics for skipped image
 		stats.SkippedImages++
 		stats.TotalOutputSize += info.Size()
-		
+
 		// Record file info
 		stats.Files = append(stats.Files, FileInfo{
 			Path:             filepath.Base(inputPath),
@@ -81,7 +89,7 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 			OutputSize:       info.Size(),
 			CompressionRatio: 1.0,
 		})
-		
+
 		// Copy original file without processing
 		return copyFile(inputPath, outputPath, info)
 	}
@@ -96,7 +104,7 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 	// Note: Currently all images are encoded as JPEG for compatibility
 	// HEIC encoding is not supported by the goheif library
 	var buf bytes.Buffer
-	options := &jpeg.Options{Quality: 95} // Higher quality for better compatibility
+	options := &jpeg.Options{Quality: 85} // Higher quality for better compatibility
 	if err := jpeg.Encode(&buf, resizedImg, options); err != nil {
 		return fmt.Errorf("failed to encode image: %v", err)
 	}
@@ -121,10 +129,10 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 	outputSize := int64(len(finalImageData))
 	stats.ProcessedImages++
 	stats.TotalOutputSize += outputSize
-	
+
 	// Calculate compression ratio
 	compressionRatio := float64(outputSize) / float64(info.Size())
-	
+
 	// Record file info
 	stats.Files = append(stats.Files, FileInfo{
 		Path:             filepath.Base(inputPath),
@@ -134,7 +142,7 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 		CompressionRatio: compressionRatio,
 	})
 
-	fmt.Printf("Processing completed: %s (%dx%d -> %dx%d, %d bytes -> %d bytes, ratio: %.2f)\n", 
+	fmt.Printf("Processing completed: %s (%dx%d -> %dx%d, %d bytes -> %d bytes, ratio: %.2f)\n",
 		inputPath, originalWidth, originalHeight, newWidth, newHeight, info.Size(), outputSize, compressionRatio)
 	return nil
 }
@@ -216,23 +224,23 @@ func copyFile(src, dst string, info os.FileInfo) error {
 // extractEXIF extracts EXIF information from image file data
 func extractEXIF(data []byte) ([]byte, error) {
 	reader := bytes.NewReader(data)
-	
+
 	// Check if it's a JPEG file by looking at the header
 	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
 		// Not a JPEG file (likely HEIC), skip EXIF extraction
 		return nil, fmt.Errorf("EXIF extraction only supported for JPEG files")
 	}
-	
+
 	// Find EXIF data segment
 	_, err := exif.Decode(reader)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Find APP1 segment (EXIF data)
 	reader.Seek(0, 0)
 	buf := make([]byte, 2)
-	
+
 	// Check JPEG file header
 	if _, err := reader.Read(buf); err != nil {
 		return nil, err
@@ -240,17 +248,17 @@ func extractEXIF(data []byte) ([]byte, error) {
 	if buf[0] != 0xFF || buf[1] != 0xD8 {
 		return nil, fmt.Errorf("not a valid JPEG file")
 	}
-	
+
 	// Find APP1 segment
 	for {
 		if _, err := reader.Read(buf); err != nil {
 			return nil, err
 		}
-		
+
 		if buf[0] != 0xFF {
 			continue
 		}
-		
+
 		// Found APP1 segment
 		if buf[1] == 0xE1 {
 			// Read segment length
@@ -258,21 +266,21 @@ func extractEXIF(data []byte) ([]byte, error) {
 				return nil, err
 			}
 			length := int(buf[0])<<8 | int(buf[1])
-			
+
 			// Read entire APP1 segment
 			exifSegment := make([]byte, length+2) // +2 for marker
 			exifSegment[0] = 0xFF
 			exifSegment[1] = 0xE1
 			exifSegment[2] = buf[0]
 			exifSegment[3] = buf[1]
-			
+
 			if _, err := reader.Read(exifSegment[4:]); err != nil {
 				return nil, err
 			}
-			
+
 			return exifSegment, nil
 		}
-		
+
 		// If it's another segment, skip it
 		if buf[1] >= 0xE0 && buf[1] <= 0xEF {
 			if _, err := reader.Read(buf); err != nil {
@@ -284,20 +292,20 @@ func extractEXIF(data []byte) ([]byte, error) {
 			break
 		}
 	}
-	
+
 	return nil, fmt.Errorf("EXIF data not found")
 }
 
 // extractHEICExif extracts EXIF information from HEIC file data
 func extractHEICExif(data []byte) ([]byte, error) {
 	reader := bytes.NewReader(data)
-	
+
 	// Use goheif.ExtractExif to extract EXIF from HEIC file
 	exifData, err := goheif.ExtractExif(reader)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return exifData, nil
 }
 
@@ -306,25 +314,25 @@ func insertEXIFCorrectly(jpegData, exifData []byte) []byte {
 	if len(jpegData) < 4 || jpegData[0] != 0xFF || jpegData[1] != 0xD8 {
 		return jpegData // Not a valid JPEG file
 	}
-	
+
 	// Create APP1 segment with EXIF data
 	// APP1 marker (0xFFE1) + length (2 bytes) + "Exif\x00\x00" + EXIF data
 	exifHeader := []byte{0xFF, 0xE1} // APP1 marker
 	exifIdentifier := []byte("Exif\x00\x00")
 	segmentLength := uint16(2 + len(exifIdentifier) + len(exifData))
-	
+
 	// Build complete APP1 segment
 	app1Segment := make([]byte, 0, 4+len(exifIdentifier)+len(exifData))
 	app1Segment = append(app1Segment, exifHeader...)
 	app1Segment = append(app1Segment, byte(segmentLength>>8), byte(segmentLength&0xFF)) // Big-endian length
 	app1Segment = append(app1Segment, exifIdentifier...)
 	app1Segment = append(app1Segment, exifData...)
-	
+
 	// Insert APP1 segment after SOI marker (0xFFD8)
 	result := make([]byte, 0, len(jpegData)+len(app1Segment))
 	result = append(result, jpegData[0:2]...) // SOI marker
 	result = append(result, app1Segment...)   // APP1 segment with EXIF
 	result = append(result, jpegData[2:]...)  // Rest of JPEG data
-	
+
 	return result
 }

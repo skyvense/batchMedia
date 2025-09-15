@@ -101,12 +101,24 @@ func processVideo(inputPath, outputPath string, info os.FileInfo) error {
 		"preset": config.VideoPreset,
 	}
 
-	// Preserve HDR metadata for H.265 encoding
+	// Configure codec-specific parameters for QuickTime compatibility
 	if config.VideoCodec == "libx265" {
+		// Preserve HDR metadata for H.265 encoding
 		kwargs["x265-params"] = "hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc"
 		kwargs["color_primaries"] = "bt2020"
 		kwargs["color_trc"] = "smpte2084"
 		kwargs["colorspace"] = "bt2020nc"
+		// Add QuickTime compatibility settings
+		kwargs["pix_fmt"] = "yuv420p10le"
+		kwargs["profile:v"] = "main10"
+		kwargs["level"] = "5.1"
+		kwargs["tag:v"] = "hvc1" // Use hvc1 tag for better QuickTime compatibility
+	} else if config.VideoCodec == "libx264" {
+		// H.264 QuickTime compatibility settings
+		kwargs["pix_fmt"] = "yuv420p"
+		kwargs["profile:v"] = "high"
+		kwargs["level"] = "4.1"
+		kwargs["movflags"] = "+faststart" // Enable fast start for web playback
 	}
 
 	// Use CRF for quality-based encoding (maintains original quality)
