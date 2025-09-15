@@ -17,7 +17,7 @@ import (
 )
 
 // processImage processes a single image file
-func processImage(inputPath, outputPath string, info os.FileInfo) error {
+func processImage(inputPath, outputPath string, info os.FileInfo, dirStats *DirectoryStats) error {
 	// Read entire file into memory
 	fileData, err := os.ReadFile(inputPath)
 	if err != nil {
@@ -115,7 +115,9 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 	// Get final image data and insert EXIF if available
 	finalImageData := buf.Bytes()
 	if exifData != nil {
-		finalImageData = insertEXIFCorrectly(finalImageData, exifData)
+		// Clear orientation tag from EXIF data since we've already applied the correction
+		cleanedExifData := clearOrientationTag(exifData)
+		finalImageData = insertEXIFCorrectly(finalImageData, cleanedExifData)
 	}
 
 	// Write output file
@@ -132,18 +134,25 @@ func processImage(inputPath, outputPath string, info os.FileInfo) error {
 	outputSize := int64(len(finalImageData))
 	stats.ProcessedImages++
 	stats.TotalOutputSize += outputSize
+	dirStats.ProcessedImages++
+	dirStats.TotalOutputSize += outputSize
 
 	// Calculate compression ratio
 	compressionRatio := float64(outputSize) / float64(info.Size())
 
+	// Get relative path for file info
+	relPath, _ := filepath.Rel(config.InputDir, inputPath)
+
 	// Record file info
-	stats.Files = append(stats.Files, FileInfo{
-		Path:             filepath.Base(inputPath),
+	fileInfo := FileInfo{
+		Path:             relPath,
 		Type:             "processed",
 		InputSize:        info.Size(),
 		OutputSize:       outputSize,
 		CompressionRatio: compressionRatio,
-	})
+	}
+	stats.Files = append(stats.Files, fileInfo)
+	dirStats.Files = append(dirStats.Files, fileInfo)
 
 	fmt.Printf("Processing completed: %s (%dx%d -> %dx%d, %d bytes -> %d bytes, ratio: %.2f)\n",
 		inputPath, originalWidth, originalHeight, newWidth, newHeight, info.Size(), outputSize, compressionRatio)
@@ -436,6 +445,37 @@ func flipVertical(src image.Image) image.Image {
 		}
 	}
 	return dst
+}
+
+// clearOrientationTag removes the orientation tag from EXIF data
+func clearOrientationTag(exifData []byte) []byte {
+	// For simplicity, we'll create a new EXIF segment with orientation set to 1 (normal)
+	// This is a basic implementation that works for most cases
+	if len(exifData) < 10 {
+		return exifData
+	}
+
+	// Make a copy of the EXIF data
+	cleanedData := make([]byte, len(exifData))
+	copy(cleanedData, exifData)
+
+	// Look for orientation tag (0x0112) in the EXIF data
+	// This is a simplified approach - in a full implementation, you'd parse the TIFF structure
+	for i := 0; i < len(cleanedData)-4; i++ {
+		// Look for orientation tag (0x0112 in big-endian or 0x1201 in little-endian)
+		if (cleanedData[i] == 0x01 && cleanedData[i+1] == 0x12) || 
+		   (cleanedData[i] == 0x12 && cleanedData[i+1] == 0x01) {
+			// Found potential orientation tag, set value to 1 (normal orientation)
+			if i+8 < len(cleanedData) {
+				// Set the value to 1 (normal orientation)
+				cleanedData[i+6] = 0x00
+				cleanedData[i+7] = 0x01
+				break
+			}
+		}
+	}
+
+	return cleanedData
 }
 
 func insertEXIFCorrectly(jpegData, exifData []byte) []byte {

@@ -55,7 +55,7 @@ func getVideoResolution(inputPath string) (int, int, error) {
 }
 
 // processVideo processes a single video file using FFmpeg
-func processVideo(inputPath, outputPath string, info os.FileInfo) error {
+func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *DirectoryStats) error {
 	// Get video resolution for threshold checking
 	originalWidth, originalHeight, err := getVideoResolution(inputPath)
 	if err != nil {
@@ -152,17 +152,52 @@ func processVideo(inputPath, outputPath string, info os.FileInfo) error {
 		scaleFilter = fmt.Sprintf("%d:-1", config.Width)
 	}
 	
+	// Preserve all metadata including GPS information
+	kwargs["map_metadata"] = "0"
+	
+	// Enable detailed FFmpeg logging and progress information
+	kwargs["loglevel"] = "info"
+	kwargs["stats"] = ""
+	kwargs["progress"] = "pipe:1"
+	
+	// Handle audio stream based on whether the video has audio
+	if hasAudioStream(inputPath) {
+		// Copy audio stream without re-encoding
+		kwargs["c:a"] = "copy"
+		fmt.Printf("Audio stream detected in %s, will preserve audio\n", inputPath)
+	} else {
+		// No audio stream, process video only
+		kwargs["an"] = "" // Disable audio
+		fmt.Printf("No audio stream detected in %s, processing video only\n", inputPath)
+	}
+	
 	if scaleFilter != "" {
 		output = output.Filter("scale", ffmpeg.Args{scaleFilter})
 	}
 
-	// Copy audio stream without re-encoding
-	kwargs["c:a"] = "copy"
-
 	// Run FFmpeg command
 	err = output.Output(outputPath, kwargs).OverWriteOutput().Run()
 	if err != nil {
-		return fmt.Errorf("failed to process video: %v", err)
+		// If processing fails and video has audio, try with audio re-encoding
+		if hasAudioStream(inputPath) {
+			fmt.Printf("Warning: Audio copy failed for %s, trying with audio re-encoding...\n", inputPath)
+			
+			// Remove the failed output file
+			os.Remove(outputPath)
+			
+			// Retry with audio re-encoding
+			kwargs["c:a"] = "aac"
+			kwargs["b:a"] = "128k"
+			delete(kwargs, "map") // Remove mapping that might cause issues
+			
+			err = output.Output(outputPath, kwargs).OverWriteOutput().Run()
+			if err != nil {
+				return fmt.Errorf("failed to process video even with audio re-encoding: %v", err)
+			}
+			fmt.Printf("Successfully processed %s with audio re-encoding\n", inputPath)
+		} else {
+			return fmt.Errorf("failed to process video: %v", err)
+		}
 	}
 
 	// Get output file info for statistics
@@ -175,18 +210,25 @@ func processVideo(inputPath, outputPath string, info os.FileInfo) error {
 	outputSize := outputInfo.Size()
 	stats.ProcessedImages++ // Using same counter for videos
 	stats.TotalOutputSize += outputSize
+	dirStats.ProcessedImages++
+	dirStats.TotalOutputSize += outputSize
 	
 	// Calculate compression ratio
 	compressionRatio := float64(outputSize) / float64(info.Size())
 	
+	// Get relative path for file info
+	relPath, _ := filepath.Rel(config.InputDir, inputPath)
+	
 	// Record file info
-	stats.Files = append(stats.Files, FileInfo{
-		Path:             filepath.Base(inputPath),
+	fileInfo := FileInfo{
+		Path:             relPath,
 		Type:             "video_processed",
 		InputSize:        info.Size(),
 		OutputSize:       outputSize,
 		CompressionRatio: compressionRatio,
-	})
+	}
+	stats.Files = append(stats.Files, fileInfo)
+	dirStats.Files = append(dirStats.Files, fileInfo)
 
 	// Preserve original file modification time
 	if err := os.Chtimes(outputPath, info.ModTime(), info.ModTime()); err != nil {
@@ -198,11 +240,24 @@ func processVideo(inputPath, outputPath string, info os.FileInfo) error {
 	return nil
 }
 
+// hasAudioStream checks if the video file contains audio streams
+func hasAudioStream(inputPath string) bool {
+	probe, err := ffmpeg.Probe(inputPath)
+	if err != nil {
+		return false // Assume no audio if probe fails
+	}
+	
+	// Check if probe result contains audio stream information
+	// This is a simplified check - in practice you'd parse the JSON output
+	return strings.Contains(probe, "audio") || strings.Contains(probe, "Audio")
+}
+
 // getVideoInfo gets basic information about a video file
 func getVideoInfo(inputPath string) (map[string]interface{}, error) {
 	// This is a placeholder for video info extraction
 	// In a real implementation, you might use ffprobe or similar
 	return map[string]interface{}{
 		"format": filepath.Ext(inputPath),
+		"has_audio": hasAudioStream(inputPath),
 	}, nil
 }
