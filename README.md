@@ -87,7 +87,7 @@ go build -o batchMedia
 
 ### Video Processing Options
 
-- `-video`: Enable video processing (auto-detected when video files are found)
+- `-disable-video`: Disable video processing (video processing is enabled by default)
 - `-video-codec=<codec>`: Video codec (libx264, libx265) - default: libx265
 - `-video-bitrate=<bitrate>`: Video bitrate (e.g., 2M, 1000k)
 - `-video-resolution=<resolution>`: Video resolution (e.g., 1920x1080, 1280x720)
@@ -133,19 +133,19 @@ Convert HEIC files to JPEG while preserving EXIF data:
 ##### 4. Basic Video Processing
 Process videos with default H.265 encoding:
 ```bash
-./batchMedia -inputdir=./videos -out=./compressed_videos -video
+./batchMedia -inputdir=./videos -out=./compressed_videos
 ```
 
 ##### 5. High-Quality Video Encoding
 Process videos with custom quality settings:
 ```bash
-./batchMedia -inputdir=./videos -out=./hq_videos -video -video-crf=18 -video-preset=slow
+./batchMedia -inputdir=./videos -out=./hq_videos -video-crf=18 -video-preset=slow
 ```
 
 ##### 6. Video Resolution Scaling
 Scale videos to 1080p resolution:
 ```bash
-./batchMedia -inputdir=./4k_videos -out=./1080p_videos -video -video-resolution=1920x1080
+./batchMedia -inputdir=./4k_videos -out=./1080p_videos -video-resolution=1920x1080
 ```
 
 #### Mixed Media Processing Examples
@@ -153,13 +153,13 @@ Scale videos to 1080p resolution:
 ##### 7. Process Images and Videos Together
 Process both images and videos in the same directory:
 ```bash
-./batchMedia -inputdir=./mixed_media -out=./processed_media -size=0.8 -video -video-crf=20
+./batchMedia -inputdir=./mixed_media -out=./processed_media -size=0.8 -video-crf=20
 ```
 
 ##### 8. Advanced Filtering
 Downscale images but skip small ones, with custom video settings:
 ```bash
-./batchMedia -inputdir=./media -out=./filtered_media -size=0.5 -threshold-width=1000 -threshold-height=1000 -video -video-codec=libx264
+./batchMedia -inputdir=./media -out=./filtered_media -size=0.5 -threshold-width=1000 -threshold-height=1000 -video-codec=libx264
 ```
 
 
@@ -183,7 +183,7 @@ Running the program without any parameters will automatically create test images
 | `-threshold-height` | int | No | Height threshold (default: 1080 for downscaling, 2160 for upscaling) |
 | `-ignore-smart-limit` | bool | No | Ignore smart default resolution limits |
 | **Video Processing** |
-| `-video` | bool | No | Enable video processing (auto-detected when video files found) |
+| `-disable-video` | bool | No | Disable video processing (video processing is enabled by default) |
 | `-video-codec` | string | No | Video codec: libx264, libx265 (default: libx265) |
 | `-video-bitrate` | string | No | Video bitrate (e.g., 2M, 1000k) |
 | `-video-resolution` | string | No | Video resolution (e.g., 1920x1080, 1280x720) |

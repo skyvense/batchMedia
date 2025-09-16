@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,12 +26,14 @@ type Config struct {
 	Extensions       string // Comma-separated list of extensions to process
 	FakeScan         bool   // Only scan and list files to be processed, don't actually process
 	// Video processing options
-	VideoEnabled     bool
+	VideoDisabled    bool
 	VideoCodec       string
 	VideoBitrate     string
 	VideoResolution  string
 	VideoCRF         int
 	VideoPreset      string
+	// Multithreading options
+	Multithread      int    // Number of concurrent threads for processing multiple directories
 }
 
 // DirectoryProgress represents the processing progress of a directory
@@ -175,6 +178,8 @@ type FileInfo struct {
 
 var config Config
 var stats ProcessStats
+var statsMutex sync.Mutex
+var progressMutex sync.Mutex
 
 func init() {
 	stats.DirectoryStats = make(map[string]*DirectoryStats)
@@ -190,12 +195,14 @@ func init() {
 	flag.StringVar(&config.Extensions, "ext", "", "Process only files with specified extensions (comma-separated, e.g., heic,jpg,png)")
 	flag.BoolVar(&config.FakeScan, "fake-scan", false, "Only scan and list files to be processed, don't actually process them")
 	// Video processing flags
-	flag.BoolVar(&config.VideoEnabled, "video", false, "Enable video processing")
+	flag.BoolVar(&config.VideoDisabled, "disable-video", false, "Disable video processing (video processing is enabled by default)")
 	flag.StringVar(&config.VideoCodec, "video-codec", "libx265", "Video codec (libx264, libx265, etc.)")
 	flag.StringVar(&config.VideoBitrate, "video-bitrate", "", "Video bitrate (e.g., 2M, 1000k)")
 	flag.StringVar(&config.VideoResolution, "video-resolution", "", "Video resolution (e.g., 1920x1080, 1280x720)")
 	flag.IntVar(&config.VideoCRF, "video-crf", 23, "Video CRF quality (0-51, lower is better quality)")
 	flag.StringVar(&config.VideoPreset, "video-preset", "medium", "Video encoding preset (ultrafast, fast, medium, slow, veryslow)")
+	// Multithreading flags
+	flag.IntVar(&config.Multithread, "multithread", 1, "Number of concurrent threads for processing multiple directories (default: 1)")
 }
 
 func validateConfig() error {
@@ -310,36 +317,41 @@ func applySmartDefaults() {
 	}
 }
 
-func processImages(targetDir string) error {
+func processImages(targetDir string, threadID int) error {
 	// Create output directory
 	if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
 
-	// First pass: count total files to process
+	// First pass: count total files to process in the target directory
 	totalFilesToProcess := 0
-	filepath.Walk(config.InputDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
+	walkDir := config.InputDir
+	if targetDir != "" {
+		walkDir = targetDir
+	}
+	
+	// Read directory contents directly (non-recursive)
+	entries, err := os.ReadDir(walkDir)
+	if err != nil {
+		return fmt.Errorf("failed to read directory %s: %v", walkDir, err)
+	}
+	
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue // Skip subdirectories
 		}
 		
-		// Skip files not in target directory (same filter as main processing)
-		if targetDir != "" {
-			// Check if this path is within the target directory
-			if !strings.HasPrefix(path, targetDir) {
-				return nil
-			}
-		}
+		filename := entry.Name()
+		path := filepath.Join(walkDir, filename)
 		
 		// Skip hidden files (macOS metadata files starting with ._)
-		filename := filepath.Base(path)
 		if strings.HasPrefix(filename, "._") {
-			return nil
+			continue
 		}
 		
 		// Check if file extension should be processed based on filter
 		if !shouldProcessExtension(path) {
-			return nil
+			continue
 		}
 		
 		ext := strings.ToLower(filepath.Ext(path))
@@ -348,44 +360,41 @@ func processImages(targetDir string) error {
 		if isImageSupported || isVideoSupported {
 			totalFilesToProcess++
 		}
-		return nil
-	})
+	}
 
 	// Progress counter
 	processedCount := 0
 
-	// Walk through files in input directory
-	return filepath.Walk(config.InputDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	// Process files in target directory (non-recursive)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue // Skip subdirectories
 		}
 
-		// Skip files not in target directory
-		if targetDir != "" {
-			// Check if this path is within the target directory
-			if !strings.HasPrefix(path, targetDir) {
-				return nil
-			}
-		}
-		if info.IsDir() {
-			return nil
-		}
+		filename := entry.Name()
+		path := filepath.Join(walkDir, filename)
 
 		// Skip hidden files (macOS metadata files starting with ._)
-		filename := filepath.Base(path)
 		if strings.HasPrefix(filename, "._") {
-			return nil
+			continue
 		}
 
 		// Check if file extension should be processed based on filter
 		if !shouldProcessExtension(path) {
-			return nil
+			continue
+		}
+
+		// Get file info
+		info, err := entry.Info()
+		if err != nil {
+			fmt.Printf("Warning: failed to get file info for %s: %v\n", path, err)
+			continue
 		}
 		
 		// Check file extension
 		ext := strings.ToLower(filepath.Ext(path))
 		isImageSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic" || ext == ".png"
-		isVideoSupported := isVideoFile(path) // Auto-enable video processing when video files are detected
+		isVideoSupported := isVideoFile(path) && !config.VideoDisabled // Video processing enabled by default unless disabled
 		
 		// Calculate relative path
 		relPath, err := filepath.Rel(config.InputDir, path)
@@ -430,36 +439,42 @@ func processImages(targetDir string) error {
 			processedCount++
 			percentage := float64(processedCount) / float64(totalFilesToProcess) * 100
 			if isVideoSupported {
-				fmt.Printf("[%d/%d] (%.1f%%) Would process video: %s (size: %d bytes) -> %s\n", processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
+				fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Would process video: %s (size: %d bytes) -> %s\n", threadID, processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
 			} else if isImageSupported {
-				fmt.Printf("[%d/%d] (%.1f%%) Would process image: %s (size: %d bytes) -> %s\n", processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
+				fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Would process image: %s (size: %d bytes) -> %s\n", threadID, processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
 			} else {
-				fmt.Printf("[%d/%d] (%.1f%%) Would copy file: %s (size: %d bytes) -> %s\n", processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
+				fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Would copy file: %s (size: %d bytes) -> %s\n", threadID, processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
 			}
 			stats.TotalInputSize += info.Size()
 			dirStats.TotalInputSize += info.Size()
-			return nil
+			continue
 		}
 		
 		if isVideoSupported {
 			// Process video file
 			processedCount++
 			percentage := float64(processedCount) / float64(totalFilesToProcess) * 100
-			fmt.Printf("[%d/%d] (%.1f%%) Processing video: %s (size: %d bytes)\n", processedCount, totalFilesToProcess, percentage, path, info.Size())
+			fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Processing video: %s (size: %d bytes)\n", threadID, processedCount, totalFilesToProcess, percentage, path, info.Size())
 			stats.TotalInputSize += info.Size()
 			dirStats.TotalInputSize += info.Size()
-			return processVideo(path, outputPath, info, dirStats)
+			err = processVideo(path, outputPath, info, dirStats)
+			if err != nil {
+				fmt.Printf("Error processing video %s: %v\n", path, err)
+			}
 		} else if isImageSupported {
 			// Process image file
 			processedCount++
 			percentage := float64(processedCount) / float64(totalFilesToProcess) * 100
-			fmt.Printf("[%d/%d] (%.1f%%) Processing image: %s (size: %d bytes)\n", processedCount, totalFilesToProcess, percentage, path, info.Size())
+			fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Processing image: %s (size: %d bytes)\n", threadID, processedCount, totalFilesToProcess, percentage, path, info.Size())
 			stats.TotalInputSize += info.Size()
 			dirStats.TotalInputSize += info.Size()
-			return processImage(path, outputPath, relPath, info, dirStats)
+			err = processImage(path, outputPath, relPath, info, dirStats)
+			if err != nil {
+				fmt.Printf("Error processing image %s: %v\n", path, err)
+			}
 		} else {
 			// Copy unsupported files directly
-			fmt.Printf("Copying unsupported file: %s (size: %d bytes)\n", path, info.Size())
+			fmt.Printf("[thread-%d] Copying unsupported file: %s (size: %d bytes)\n", threadID, path, info.Size())
 			stats.CopiedFiles++
 			dirStats.CopiedFiles++
 			stats.TotalInputSize += info.Size()
@@ -478,9 +493,14 @@ func processImages(targetDir string) error {
 			stats.Files = append(stats.Files, fileInfo)
 			dirStats.Files = append(dirStats.Files, fileInfo)
 			
-			return copyFile(path, outputPath, info)
+			err = copyFile(path, outputPath, info)
+			if err != nil {
+				return err
+			}
 		}
-	})
+	}
+	
+	return nil
 }
 
 func main() {
@@ -543,22 +563,61 @@ func main() {
 		// Record start time
 		startTime := time.Now()
 
-		// Process each directory in fake scan mode
-		for i, dirPath := range uncompletedDirs {
-			fmt.Printf("[%d/%d] Processing directory: %s\n", i+1, len(uncompletedDirs), dirPath)
+		// Process directories with multithreading support in fake scan mode
+		if len(uncompletedDirs) <= 1 || config.Multithread <= 1 {
+			// Single-threaded processing for 1 directory or when multithread is disabled
+			for i, dirPath := range uncompletedDirs {
+				fmt.Printf("[%d/%d] Processing directory: %s\n", i+1, len(uncompletedDirs), dirPath)
+				
+				// Process this directory
+				if err := processImages(dirPath, 0); err != nil {
+					fmt.Printf("Error processing directory %s: %v\n", dirPath, err)
+					continue
+				}
+				
+				// Skip HTML report generation in fake scan mode
+				if config.Extensions != "" {
+					fmt.Printf("Skipping HTML report generation (extension filter active: %s)\n", config.Extensions)
+				}
+				
+				fmt.Printf("Completed directory: %s\n", dirPath)
+			}
+		} else {
+			// Multi-threaded processing
+			fmt.Printf("Using %d threads for parallel processing\n", config.Multithread)
 			
-			// Process this directory
-			if err := processImages(dirPath); err != nil {
-				fmt.Printf("Error processing directory %s: %v\n", dirPath, err)
-				continue
+			// Create semaphore to limit concurrent goroutines
+			semaphore := make(chan struct{}, config.Multithread)
+			var wg sync.WaitGroup
+			
+			for i, dirPath := range uncompletedDirs {
+				wg.Add(1)
+				go func(index int, path string) {
+					defer wg.Done()
+					
+					// Acquire semaphore
+					semaphore <- struct{}{}
+					defer func() { <-semaphore }()
+					
+					fmt.Printf("[%d/%d] Processing directory: %s\n", index+1, len(uncompletedDirs), path)
+					
+					// Process this directory
+					if err := processImages(path, index+1); err != nil {
+						fmt.Printf("Error processing directory %s: %v\n", path, err)
+						return
+					}
+					
+					// Skip HTML report generation in fake scan mode
+					if config.Extensions != "" {
+						fmt.Printf("Skipping HTML report generation (extension filter active: %s)\n", config.Extensions)
+					}
+					
+					fmt.Printf("Completed directory: %s\n", path)
+				}(i, dirPath)
 			}
 			
-			// Skip HTML report generation in fake scan mode
-			if config.Extensions != "" {
-				fmt.Printf("Skipping HTML report generation (extension filter active: %s)\n", config.Extensions)
-			}
-			
-			fmt.Printf("Completed directory: %s\n", dirPath)
+			// Wait for all goroutines to complete
+			wg.Wait()
 		}
 
 		// Record processing time
@@ -611,41 +670,101 @@ func main() {
 	// Record start time
 	startTime := time.Now()
 
-	// Process each directory
-	for i, dirPath := range uncompletedDirs {
-		fmt.Printf("[%d/%d] Processing directory: %s\n", i+1, len(uncompletedDirs), dirPath)
-		
-		// Process this directory
-		if err := processImages(dirPath); err != nil {
-			fmt.Printf("Error processing directory %s: %v\n", dirPath, err)
-			continue
-		}
-		
-		// Mark directory as completed
-		tracker.markDirectoryCompleted(dirPath)
-		
-		// Save progress after each directory
-		if err := tracker.saveProgress(progressFile); err != nil {
-			fmt.Printf("Warning: failed to save progress: %v\n", err)
-		}
-		
-		// Generate HTML report for this directory only (skip if using extension filter)
-		if config.Extensions == "" {
-			for dirPath, dirStats := range stats.DirectoryStats {
-				if len(dirStats.Files) > 0 {
-					if err := generateDirectoryHTMLReport(dirPath, dirStats); err != nil {
-						fmt.Printf("Warning: failed to generate HTML report for directory '%s': %v\n", dirPath, err)
+	// Process directories with multithreading support
+	if len(uncompletedDirs) <= 1 || config.Multithread <= 1 {
+		// Single-threaded processing for 1 directory or when multithread is disabled
+		for i, dirPath := range uncompletedDirs {
+			fmt.Printf("[%d/%d] Processing directory: %s\n", i+1, len(uncompletedDirs), dirPath)
+			
+			// Process this directory
+			if err := processImages(dirPath, 0); err != nil {
+				fmt.Printf("Error processing directory %s: %v\n", dirPath, err)
+				continue
+			}
+			
+			// Mark directory as completed
+			tracker.markDirectoryCompleted(dirPath)
+			
+			// Save progress after each directory
+			if err := tracker.saveProgress(progressFile); err != nil {
+				fmt.Printf("Warning: failed to save progress: %v\n", err)
+			}
+			
+			// Generate HTML report for this directory only (skip if using extension filter)
+			if config.Extensions == "" {
+				for dirPath, dirStats := range stats.DirectoryStats {
+					if len(dirStats.Files) > 0 {
+						if err := generateDirectoryHTMLReport(dirPath, dirStats); err != nil {
+							fmt.Printf("Warning: failed to generate HTML report for directory '%s': %v\n", dirPath, err)
+						}
 					}
 				}
+			} else {
+				fmt.Printf("Skipping HTML report generation (extension filter active: %s)\n", config.Extensions)
 			}
-		} else {
-			fmt.Printf("Skipping HTML report generation (extension filter active: %s)\n", config.Extensions)
+			
+			// Reset stats for next directory
+			stats = ProcessStats{DirectoryStats: make(map[string]*DirectoryStats)}
+			
+			fmt.Printf("Completed directory: %s\n", dirPath)
+		}
+	} else {
+		// Multi-threaded processing for multiple directories
+		fmt.Printf("Using %d threads for parallel processing\n", config.Multithread)
+		
+		// Create a semaphore to limit concurrent goroutines
+		semaphore := make(chan struct{}, config.Multithread)
+		var wg sync.WaitGroup
+		
+		for i, dirPath := range uncompletedDirs {
+			wg.Add(1)
+			go func(dir string, index int) {
+				defer wg.Done()
+				
+				// Acquire semaphore
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+				
+				fmt.Printf("[%d/%d] Processing directory: %s\n", index+1, len(uncompletedDirs), dir)
+				
+				// Process this directory
+				if err := processImages(dir, index+1); err != nil {
+					fmt.Printf("Error processing directory %s: %v\n", dir, err)
+					return
+				}
+				
+				// Thread-safe operations with mutex
+				progressMutex.Lock()
+				tracker.markDirectoryCompleted(dir)
+				if err := tracker.saveProgress(progressFile); err != nil {
+					fmt.Printf("Warning: failed to save progress: %v\n", err)
+				}
+				progressMutex.Unlock()
+				
+				// Generate HTML report (thread-safe)
+				statsMutex.Lock()
+				if config.Extensions == "" {
+					for dirPath, dirStats := range stats.DirectoryStats {
+						if len(dirStats.Files) > 0 {
+							if err := generateDirectoryHTMLReport(dirPath, dirStats); err != nil {
+								fmt.Printf("Warning: failed to generate HTML report for directory '%s': %v\n", dirPath, err)
+							}
+						}
+					}
+				} else {
+					fmt.Printf("Skipping HTML report generation (extension filter active: %s)\n", config.Extensions)
+				}
+				// Reset stats for next directory
+				stats = ProcessStats{DirectoryStats: make(map[string]*DirectoryStats)}
+				statsMutex.Unlock()
+				
+				fmt.Printf("Completed directory: %s\n", dir)
+			}(dirPath, i)
 		}
 		
-		// Reset stats for next directory
-		stats = ProcessStats{DirectoryStats: make(map[string]*DirectoryStats)}
-		
-		fmt.Printf("Completed directory: %s\n", dirPath)
+		// Wait for all goroutines to complete
+		wg.Wait()
+		fmt.Println("All directories processed in parallel")
 	}
 
 	// Record processing time
