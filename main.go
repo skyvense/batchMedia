@@ -21,6 +21,9 @@ type Config struct {
 	ThresholdWidth   int
 	ThresholdHeight  int
 	IgnoreSmartLimit bool
+	// File filtering options
+	Extensions       string // Comma-separated list of extensions to process
+	FakeScan         bool   // Only scan and list files to be processed, don't actually process
 	// Video processing options
 	VideoEnabled     bool
 	VideoCodec       string
@@ -183,6 +186,9 @@ func init() {
 	flag.IntVar(&config.ThresholdWidth, "threshold-width", 0, "Width threshold (default: 1920 for downscaling, 3840 for upscaling)")
 	flag.IntVar(&config.ThresholdHeight, "threshold-height", 0, "Height threshold (default: 1080 for downscaling, 2160 for upscaling)")
 	flag.BoolVar(&config.IgnoreSmartLimit, "ignore-smart-limit", false, "Ignore smart default resolution limits")
+	// File filtering flags
+	flag.StringVar(&config.Extensions, "ext", "", "Process only files with specified extensions (comma-separated, e.g., heic,jpg,png)")
+	flag.BoolVar(&config.FakeScan, "fake-scan", false, "Only scan and list files to be processed, don't actually process them")
 	// Video processing flags
 	flag.BoolVar(&config.VideoEnabled, "video", false, "Enable video processing")
 	flag.StringVar(&config.VideoCodec, "video-codec", "libx265", "Video codec (libx264, libx265, etc.)")
@@ -201,20 +207,23 @@ func validateConfig() error {
 		return fmt.Errorf("output directory cannot be empty")
 	}
 
-	if config.ScalingRatio == 0 && config.Width == 0 {
-		return fmt.Errorf("must specify either --size or --width parameter")
-	}
+	// Skip size/width validation in fake scan mode
+	if !config.FakeScan {
+		if config.ScalingRatio == 0 && config.Width == 0 {
+			return fmt.Errorf("must specify either --size or --width parameter")
+		}
 
-	if config.ScalingRatio != 0 && config.Width != 0 {
-		return fmt.Errorf("--size and --width parameters cannot be used simultaneously")
-	}
+		if config.ScalingRatio != 0 && config.Width != 0 {
+			return fmt.Errorf("--size and --width parameters cannot be used simultaneously")
+		}
 
-	if config.ScalingRatio != 0 && (config.ScalingRatio <= 0 || config.ScalingRatio > 10) {
-		return fmt.Errorf("--size parameter must be between 0 and 10")
-	}
+		if config.ScalingRatio != 0 && (config.ScalingRatio <= 0 || config.ScalingRatio > 10) {
+			return fmt.Errorf("--size parameter must be between 0 and 10")
+		}
 
-	if config.Width != 0 && config.Width <= 0 {
-		return fmt.Errorf("--width parameter must be greater than 0")
+		if config.Width != 0 && config.Width <= 0 {
+			return fmt.Errorf("--width parameter must be greater than 0")
+		}
 	}
 
 	// Validate threshold parameters
@@ -240,6 +249,28 @@ func validateConfig() error {
 }
 
 // applySmartDefaults applies intelligent default resolution limits based on scaling operation
+// shouldProcessExtension checks if the file extension should be processed based on the -ext filter
+func shouldProcessExtension(filePath string) bool {
+	// If no extension filter is specified, process all supported files
+	if config.Extensions == "" {
+		return true
+	}
+	
+	// Parse the extensions list
+	allowedExts := strings.Split(strings.ToLower(config.Extensions), ",")
+	fileExt := strings.ToLower(strings.TrimPrefix(filepath.Ext(filePath), "."))
+	
+	// Check if the file extension is in the allowed list
+	for _, ext := range allowedExts {
+		ext = strings.TrimSpace(ext)
+		if fileExt == ext {
+			return true
+		}
+	}
+	
+	return false
+}
+
 func applySmartDefaults() {
 	isDownscaling := false
 	isUpscaling := false
@@ -306,6 +337,11 @@ func processImages(targetDir string) error {
 			return nil
 		}
 		
+		// Check if file extension should be processed based on filter
+		if !shouldProcessExtension(path) {
+			return nil
+		}
+		
 		ext := strings.ToLower(filepath.Ext(path))
 		isImageSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic" || ext == ".png"
 		isVideoSupported := isVideoFile(path)
@@ -341,6 +377,11 @@ func processImages(targetDir string) error {
 			return nil
 		}
 
+		// Check if file extension should be processed based on filter
+		if !shouldProcessExtension(path) {
+			return nil
+		}
+		
 		// Check file extension
 		ext := strings.ToLower(filepath.Ext(path))
 		isImageSupported := ext == ".jpg" || ext == ".jpeg" || ext == ".heic" || ext == ".png"
@@ -383,6 +424,22 @@ func processImages(targetDir string) error {
 		
 		stats.TotalFiles++
 		dirStats.TotalFiles++
+		
+		if config.FakeScan {
+			// Fake scan mode: only list files to be processed
+			processedCount++
+			percentage := float64(processedCount) / float64(totalFilesToProcess) * 100
+			if isVideoSupported {
+				fmt.Printf("[%d/%d] (%.1f%%) Would process video: %s (size: %d bytes) -> %s\n", processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
+			} else if isImageSupported {
+				fmt.Printf("[%d/%d] (%.1f%%) Would process image: %s (size: %d bytes) -> %s\n", processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
+			} else {
+				fmt.Printf("[%d/%d] (%.1f%%) Would copy file: %s (size: %d bytes) -> %s\n", processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
+			}
+			stats.TotalInputSize += info.Size()
+			dirStats.TotalInputSize += info.Size()
+			return nil
+		}
 		
 		if isVideoSupported {
 			// Process video file
@@ -433,14 +490,86 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Progress file path
-	progressFile := filepath.Join(config.OutputDir, "progress.json")
+	// Handle fake scan mode - skip progress file operations
+	// Progress file path - use extension-specific name if filtering by extension
+	progressFileName := "progress.json"
+	if config.Extensions != "" {
+		// Replace commas and spaces with underscores for filename
+		extSuffix := strings.ReplaceAll(strings.ReplaceAll(config.Extensions, ",", "_"), " ", "")
+		progressFileName = fmt.Sprintf("progress_%s.json", extSuffix)
+	}
+	progressFile := filepath.Join(config.OutputDir, progressFileName)
 
 	// Load existing progress
 	tracker, err := loadProgress(progressFile)
 	if err != nil {
 		log.Fatalf("Failed to load progress: %v", err)
 	}
+
+	if config.FakeScan {
+		// Fake scan mode: use progress file but don't save changes or do actual processing
+		// Scan directories if progress is empty
+		if len(tracker.Directories) == 0 {
+			fmt.Println("Scanning directories...")
+			directories, err := scanDirectories(config.InputDir)
+			if err != nil {
+				log.Fatalf("Failed to scan directories: %v", err)
+			}
+
+			// If no subdirectories found, process the root directory itself
+			if len(directories) == 0 {
+				directories = append(directories, config.InputDir)
+			}
+			
+			// Initialize progress tracker (but don't save it)
+			for _, dir := range directories {
+				tracker.Directories = append(tracker.Directories, DirectoryProgress{
+					Path:      dir,
+					Completed: false,
+				})
+			}
+			fmt.Printf("Found %d directories to process\n", len(directories))
+		}
+
+		// Get uncompleted directories
+		uncompletedDirs := tracker.getUncompletedDirectories()
+		if len(uncompletedDirs) == 0 {
+			fmt.Println("All directories have been processed!")
+			return
+		}
+
+		fmt.Printf("Processing %d remaining directories...\n", len(uncompletedDirs))
+
+		// Record start time
+		startTime := time.Now()
+
+		// Process each directory in fake scan mode
+		for i, dirPath := range uncompletedDirs {
+			fmt.Printf("[%d/%d] Processing directory: %s\n", i+1, len(uncompletedDirs), dirPath)
+			
+			// Process this directory
+			if err := processImages(dirPath); err != nil {
+				fmt.Printf("Error processing directory %s: %v\n", dirPath, err)
+				continue
+			}
+			
+			// Skip HTML report generation in fake scan mode
+			if config.Extensions != "" {
+				fmt.Printf("Skipping HTML report generation (extension filter active: %s)\n", config.Extensions)
+			}
+			
+			fmt.Printf("Completed directory: %s\n", dirPath)
+		}
+
+		// Record processing time
+		processingTime := time.Since(startTime).String()
+
+		fmt.Println("Batch processing completed!")
+		fmt.Printf("Total processing time: %s\n", processingTime)
+		return
+	}
+
+	// Normal mode: use progress file tracking
 
 	// Scan directories if progress is empty
 	if len(tracker.Directories) == 0 {
@@ -500,13 +629,17 @@ func main() {
 			fmt.Printf("Warning: failed to save progress: %v\n", err)
 		}
 		
-		// Generate HTML report for this directory only
-		for dirPath, dirStats := range stats.DirectoryStats {
-			if len(dirStats.Files) > 0 {
-				if err := generateDirectoryHTMLReport(dirPath, dirStats); err != nil {
-					fmt.Printf("Warning: failed to generate HTML report for directory '%s': %v\n", dirPath, err)
+		// Generate HTML report for this directory only (skip if using extension filter)
+		if config.Extensions == "" {
+			for dirPath, dirStats := range stats.DirectoryStats {
+				if len(dirStats.Files) > 0 {
+					if err := generateDirectoryHTMLReport(dirPath, dirStats); err != nil {
+						fmt.Printf("Warning: failed to generate HTML report for directory '%s': %v\n", dirPath, err)
+					}
 				}
 			}
+		} else {
+			fmt.Printf("Skipping HTML report generation (extension filter active: %s)\n", config.Extensions)
 		}
 		
 		// Reset stats for next directory
