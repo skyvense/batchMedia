@@ -425,6 +425,20 @@ func processImages(targetDir string, threadID int) error {
 			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".jpg"
 		}
 		
+		// Check if output file already exists and skip if it does
+		if _, err := os.Stat(outputPath); err == nil {
+			// File already exists, skip processing
+			processedCount++
+			var percentage float64
+			if totalFilesToProcess > 0 {
+				percentage = float64(processedCount) / float64(totalFilesToProcess) * 100
+			}
+			fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Skipping existing file: %s -> %s\n", threadID, processedCount, totalFilesToProcess, percentage, path, outputPath)
+			stats.SkippedImages++
+			dirStats.SkippedImages++
+			continue
+		}
+		
 		// Ensure output directory exists
 		outputDir := filepath.Dir(outputPath)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
