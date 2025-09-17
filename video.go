@@ -67,10 +67,13 @@ func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 	if shouldSkipVideo(originalWidth, originalHeight) {
 		fmt.Printf("Skipping video (resolution %dx%d exceeds threshold): %s (size: %d bytes)\n", 
 			originalWidth, originalHeight, inputPath, info.Size())
+		statsMutex.Lock()
 		stats.SkippedImages++ // Using same counter for videos
 		stats.TotalOutputSize += info.Size()
+		statsMutex.Unlock()
 		
 		// Record file info
+		statsMutex.Lock()
 		stats.Files = append(stats.Files, FileInfo{
 			Path:             filepath.Base(inputPath),
 			Type:             "skipped",
@@ -80,6 +83,7 @@ func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 			NewDim:           fmt.Sprintf("%dx%d", originalWidth, originalHeight),
 			CompressionRatio: 1.0,
 		})
+		statsMutex.Unlock()
 		
 		// Copy original file
 		return copyFile(inputPath, outputPath, info)
@@ -219,10 +223,12 @@ func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 
 	// Record statistics
 	outputSize := outputInfo.Size()
+	statsMutex.Lock()
 	stats.ProcessedImages++ // Using same counter for videos
 	stats.TotalOutputSize += outputSize
 	dirStats.ProcessedImages++
 	dirStats.TotalOutputSize += outputSize
+	statsMutex.Unlock()
 	
 	// Calculate compression ratio
 	compressionRatio := float64(outputSize) / float64(info.Size())
@@ -238,8 +244,10 @@ func processVideo(inputPath, outputPath string, info os.FileInfo, dirStats *Dire
 		OutputSize:       outputSize,
 		CompressionRatio: compressionRatio,
 	}
+	statsMutex.Lock()
 	stats.Files = append(stats.Files, fileInfo)
 	dirStats.Files = append(dirStats.Files, fileInfo)
+	statsMutex.Unlock()
 
 	// Preserve original file modification time
 	if err := os.Chtimes(outputPath, info.ModTime(), info.ModTime()); err != nil {

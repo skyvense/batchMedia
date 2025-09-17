@@ -80,10 +80,12 @@ func processImage(inputPath, outputPath, relPath string, info os.FileInfo, dirSt
 		fmt.Printf("Skipping %s: resolution %dx%d is outside threshold range (size: %d bytes)\n", inputPath, originalWidth, originalHeight, info.Size())
 
 		// Record statistics for skipped image
-		stats.SkippedImages++
-		stats.TotalOutputSize += info.Size()
-		dirStats.SkippedImages++
-		dirStats.TotalOutputSize += info.Size()
+	statsMutex.Lock()
+	stats.SkippedImages++
+	stats.TotalOutputSize += info.Size()
+	dirStats.SkippedImages++
+	dirStats.TotalOutputSize += info.Size()
+	statsMutex.Unlock()
 
 		// Record file info
 		fileInfo := FileInfo{
@@ -93,8 +95,10 @@ func processImage(inputPath, outputPath, relPath string, info os.FileInfo, dirSt
 			OutputSize:       info.Size(),
 			CompressionRatio: 1.0,
 		}
+		statsMutex.Lock()
 		stats.Files = append(stats.Files, fileInfo)
 		dirStats.Files = append(dirStats.Files, fileInfo)
+		statsMutex.Unlock()
 
 		// Copy original file without processing
 		return copyFile(inputPath, outputPath, info)
@@ -135,10 +139,12 @@ func processImage(inputPath, outputPath, relPath string, info os.FileInfo, dirSt
 
 	// Record statistics
 	outputSize := int64(len(finalImageData))
+	statsMutex.Lock()
 	stats.ProcessedImages++
 	stats.TotalOutputSize += outputSize
 	dirStats.ProcessedImages++
 	dirStats.TotalOutputSize += outputSize
+	statsMutex.Unlock()
 
 	// Calculate compression ratio
 	compressionRatio := float64(outputSize) / float64(info.Size())
@@ -151,8 +157,10 @@ func processImage(inputPath, outputPath, relPath string, info os.FileInfo, dirSt
 		OutputSize:       outputSize,
 		CompressionRatio: compressionRatio,
 	}
+	statsMutex.Lock()
 	stats.Files = append(stats.Files, fileInfo)
 	dirStats.Files = append(dirStats.Files, fileInfo)
+	statsMutex.Unlock()
 
 	fmt.Printf("Processing completed: %s (%dx%d -> %dx%d, %d bytes -> %d bytes, ratio: %.2f)\n",
 		inputPath, originalWidth, originalHeight, newWidth, newHeight, info.Size(), outputSize, compressionRatio)

@@ -408,7 +408,8 @@ func processImages(targetDir string, threadID int) error {
 			dirPath = "" // Root directory
 		}
 		
-		// Initialize directory stats if not exists
+		// Initialize directory stats if not exists (with mutex protection)
+		statsMutex.Lock()
 		if _, exists := stats.DirectoryStats[dirPath]; !exists {
 			stats.DirectoryStats[dirPath] = &DirectoryStats{
 				DirectoryPath: dirPath,
@@ -416,6 +417,7 @@ func processImages(targetDir string, threadID int) error {
 			}
 		}
 		dirStats := stats.DirectoryStats[dirPath]
+		statsMutex.Unlock()
 		
 		// Build output path
 		outputPath := filepath.Join(config.OutputDir, relPath)
@@ -485,8 +487,10 @@ func processImages(targetDir string, threadID int) error {
 			} else {
 				fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Would copy file: %s (size: %d bytes) -> %s\n", threadID, processedCount, totalFilesToProcess, percentage, path, info.Size(), outputPath)
 			}
+			statsMutex.Lock()
 			stats.TotalInputSize += info.Size()
 			dirStats.TotalInputSize += info.Size()
+			statsMutex.Unlock()
 			continue
 		}
 		
@@ -495,8 +499,10 @@ func processImages(targetDir string, threadID int) error {
 			processedCount++
 			percentage := float64(processedCount) / float64(totalFilesToProcess) * 100
 			fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Processing video: %s (size: %d bytes)\n", threadID, processedCount, totalFilesToProcess, percentage, path, info.Size())
+			statsMutex.Lock()
 			stats.TotalInputSize += info.Size()
 			dirStats.TotalInputSize += info.Size()
+			statsMutex.Unlock()
 			err = processVideo(path, outputPath, info, dirStats)
 			if err != nil {
 				fmt.Printf("Error processing video %s: %v\n", path, err)
@@ -506,8 +512,10 @@ func processImages(targetDir string, threadID int) error {
 			processedCount++
 			percentage := float64(processedCount) / float64(totalFilesToProcess) * 100
 			fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Processing image: %s (size: %d bytes)\n", threadID, processedCount, totalFilesToProcess, percentage, path, info.Size())
+			statsMutex.Lock()
 			stats.TotalInputSize += info.Size()
 			dirStats.TotalInputSize += info.Size()
+			statsMutex.Unlock()
 			err = processImage(path, outputPath, relPath, info, dirStats)
 			if err != nil {
 				fmt.Printf("Error processing image %s: %v\n", path, err)
@@ -515,12 +523,14 @@ func processImages(targetDir string, threadID int) error {
 		} else {
 			// Copy unsupported files directly
 			fmt.Printf("[thread-%d] Copying unsupported file: %s (size: %d bytes)\n", threadID, path, info.Size())
+			statsMutex.Lock()
 			stats.CopiedFiles++
 			dirStats.CopiedFiles++
 			stats.TotalInputSize += info.Size()
 			stats.TotalOutputSize += info.Size()
 			dirStats.TotalInputSize += info.Size()
 			dirStats.TotalOutputSize += info.Size()
+			statsMutex.Unlock()
 			
 			// Record file info
 			fileInfo := FileInfo{
@@ -530,8 +540,10 @@ func processImages(targetDir string, threadID int) error {
 				OutputSize:   info.Size(),
 				CompressionRatio: 1.0,
 			}
+			statsMutex.Lock()
 			stats.Files = append(stats.Files, fileInfo)
 			dirStats.Files = append(dirStats.Files, fileInfo)
+			statsMutex.Unlock()
 			
 			err = copyFile(path, outputPath, info)
 			if err != nil {
