@@ -243,14 +243,8 @@ func extractEXIF(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("EXIF extraction only supported for JPEG files")
 	}
 
-	// Find EXIF data segment
-	_, err := exif.Decode(reader)
-	if err != nil {
-		return nil, err
-	}
-
-	// Find APP1 segment (EXIF data)
-	reader.Seek(0, 0)
+	// Find APP1 segment (EXIF data) directly without calling exif.Decode
+	// This avoids TIFF byte order errors from corrupted EXIF data
 	buf := make([]byte, 2)
 
 	// Check JPEG file header
@@ -315,7 +309,8 @@ func applyEXIFOrientation(img image.Image, fileData []byte) image.Image {
 	reader := bytes.NewReader(fileData)
 	x, err := exif.Decode(reader)
 	if err != nil {
-		// No EXIF data or unable to decode, return original image
+		// No EXIF data or unable to decode (e.g., TIFF byte order errors), return original image
+		// This is not an error condition, just means we can't apply orientation correction
 		return img
 	}
 
@@ -470,24 +465,49 @@ func insertEXIFCorrectly(jpegData, exifData []byte) []byte {
 		return jpegData // Not a valid JPEG file
 	}
 
-	// Create APP1 segment with EXIF data
-	// APP1 marker (0xFFE1) + length (2 bytes) + "Exif\x00\x00" + EXIF data
-	exifHeader := []byte{0xFF, 0xE1} // APP1 marker
-	exifIdentifier := []byte("Exif\x00\x00")
-	segmentLength := uint16(2 + len(exifIdentifier) + len(exifData))
+	// exifData from extractEXIF already contains the complete APP1 segment
+	// (0xFFE1 marker + length + "Exif\x00\x00" + TIFF data)
+	// So we just need to insert it directly after the SOI marker
 
-	// Build complete APP1 segment
-	app1Segment := make([]byte, 0, 4+len(exifIdentifier)+len(exifData))
-	app1Segment = append(app1Segment, exifHeader...)
-	app1Segment = append(app1Segment, byte(segmentLength>>8), byte(segmentLength&0xFF)) // Big-endian length
-	app1Segment = append(app1Segment, exifIdentifier...)
-	app1Segment = append(app1Segment, exifData...)
-
-	// Insert APP1 segment after SOI marker (0xFFD8)
-	result := make([]byte, 0, len(jpegData)+len(app1Segment))
-	result = append(result, jpegData[0:2]...) // SOI marker
-	result = append(result, app1Segment...)   // APP1 segment with EXIF
+	// Insert complete APP1 segment after SOI marker (0xFFD8)
+	result := make([]byte, 0, len(jpegData)+len(exifData))
+	result = append(result, jpegData[0:2]...) // SOI marker (0xFFD8)
+	result = append(result, exifData...)      // Complete APP1 segment with EXIF
 	result = append(result, jpegData[2:]...)  // Rest of JPEG data
 
 	return result
+}
+
+// verifyEXIFPresence checks if a JPEG file contains EXIF data
+func verifyEXIFPresence(filePath string) bool {
+	// Read the first few bytes to check for EXIF markers
+	file, err := os.Open(filePath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	// Read first 64 bytes to check for EXIF markers
+	buffer := make([]byte, 64)
+	n, err := file.Read(buffer)
+	if err != nil || n < 10 {
+		return false
+	}
+
+	// Check if it's a JPEG file
+	if buffer[0] != 0xFF || buffer[1] != 0xD8 {
+		return false
+	}
+
+	// Look for APP1 segment (0xFFE1) followed by "Exif"
+	for i := 2; i < n-6; i++ {
+		if buffer[i] == 0xFF && buffer[i+1] == 0xE1 {
+			// Found APP1 marker, check for "Exif" identifier
+			if i+6 < n && string(buffer[i+4:i+8]) == "Exif" {
+				return true
+			}
+		}
+	}
+
+	return false
 }

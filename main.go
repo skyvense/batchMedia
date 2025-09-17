@@ -425,18 +425,44 @@ func processImages(targetDir string, threadID int) error {
 			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".jpg"
 		}
 		
-		// Check if output file already exists and skip if it does
+		// Check if output file already exists
 		if _, err := os.Stat(outputPath); err == nil {
-			// File already exists, skip processing
-			processedCount++
-			var percentage float64
-			if totalFilesToProcess > 0 {
-				percentage = float64(processedCount) / float64(totalFilesToProcess) * 100
+			// File already exists, check if it needs reprocessing
+			shouldReprocess := false
+			
+			// For image files, verify EXIF preservation
+			if isImageSupported {
+				// Check if original file has EXIF data
+				originalHasEXIF := false
+				if ext == ".jpg" || ext == ".jpeg" {
+					originalHasEXIF = verifyEXIFPresence(path)
+				} else if ext == ".heic" {
+					// HEIC files typically have EXIF, assume true for now
+					originalHasEXIF = true
+				}
+				
+				// If original has EXIF, check if output file preserved it
+				if originalHasEXIF {
+					outputHasEXIF := verifyEXIFPresence(outputPath)
+					if !outputHasEXIF {
+						shouldReprocess = true
+						fmt.Printf("[thread-%d] EXIF missing in output file, reprocessing: %s\n", threadID, outputPath)
+					}
+				}
 			}
-			fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Skipping existing file: %s -> %s\n", threadID, processedCount, totalFilesToProcess, percentage, path, outputPath)
-			stats.SkippedImages++
-			dirStats.SkippedImages++
-			continue
+			
+			if !shouldReprocess {
+				// File already exists and is valid, skip processing
+				processedCount++
+				var percentage float64
+				if totalFilesToProcess > 0 {
+					percentage = float64(processedCount) / float64(totalFilesToProcess) * 100
+				}
+				fmt.Printf("[thread-%d] [%d/%d] (%.1f%%) Skipping existing file: %s -> %s\n", threadID, processedCount, totalFilesToProcess, percentage, path, outputPath)
+				stats.SkippedImages++
+				dirStats.SkippedImages++
+				continue
+			}
 		}
 		
 		// Ensure output directory exists
