@@ -115,7 +115,7 @@ jobs:
       run: |
         mkdir -p dist
         if [ "$GOOS" = "windows" ]; then
-          go build -ldflags "-s -w" -o dist/batchMedia-$GOOS-$GOARCH.exe .
+          go build -ldflags "-s -w -linkmode external -extldflags '-static'" -o dist/batchMedia-$GOOS-$GOARCH.exe .
         else
           go build -ldflags "-s -w" -o dist/batchMedia-$GOOS-$GOARCH .
         fi
