@@ -184,25 +184,54 @@ var progressMutex sync.Mutex
 func init() {
 	stats.DirectoryStats = make(map[string]*DirectoryStats)
 	
+	// Core parameters (most commonly used)
 	flag.StringVar(&config.InputDir, "inputdir", "", "Input directory path (required)")
 	flag.StringVar(&config.OutputDir, "out", "", "Output directory path (required)")
 	flag.Float64Var(&config.ScalingRatio, "size", 0, "Scaling ratio (e.g., 0.5 means scale to 50%)")
+	flag.IntVar(&config.Multithread, "multithread", 1, "Number of concurrent threads for processing multiple directories (default: 1)")
+	
+	// Image processing parameters
 	flag.IntVar(&config.Width, "width", 0, "Target width (pixels)")
 	flag.IntVar(&config.ThresholdWidth, "threshold-width", 0, "Width threshold (default: 1920 for downscaling, 3840 for upscaling)")
 	flag.IntVar(&config.ThresholdHeight, "threshold-height", 0, "Height threshold (default: 1080 for downscaling, 2160 for upscaling)")
 	flag.BoolVar(&config.IgnoreSmartLimit, "ignore-smart-limit", false, "Ignore smart default resolution limits")
-	// File filtering flags
+	
+	// File filtering parameters
 	flag.StringVar(&config.Extensions, "ext", "", "Process only files with specified extensions (comma-separated, e.g., heic,jpg,png)")
 	flag.BoolVar(&config.FakeScan, "fake-scan", false, "Only scan and list files to be processed, don't actually process them")
-	// Video processing flags
+	
+	// Video processing parameters
 	flag.BoolVar(&config.VideoDisabled, "disable-video", false, "Disable video processing (video processing is enabled by default)")
 	flag.StringVar(&config.VideoCodec, "video-codec", "libx265", "Video codec (libx264, libx265, etc.)")
 	flag.StringVar(&config.VideoBitrate, "video-bitrate", "", "Video bitrate (e.g., 2M, 1000k)")
 	flag.StringVar(&config.VideoResolution, "video-resolution", "", "Video resolution (e.g., 1920x1080, 1280x720)")
 	flag.IntVar(&config.VideoCRF, "video-crf", 23, "Video CRF quality (0-51, lower is better quality)")
 	flag.StringVar(&config.VideoPreset, "video-preset", "medium", "Video encoding preset (ultrafast, fast, medium, slow, veryslow)")
-	// Multithreading flags
-	flag.IntVar(&config.Multithread, "multithread", 1, "Number of concurrent threads for processing multiple directories (default: 1)")
+	
+	// Custom usage function to display parameters in desired order
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nCore Parameters:\n")
+		fmt.Fprintf(os.Stderr, "  -inputdir string\n        Input directory path (required)\n")
+		fmt.Fprintf(os.Stderr, "  -out string\n        Output directory path (required)\n")
+		fmt.Fprintf(os.Stderr, "  -size float\n        Scaling ratio (e.g., 0.5 means scale to 50%%)\n")
+		fmt.Fprintf(os.Stderr, "  -multithread int\n        Number of concurrent threads for processing multiple directories (default: 1) (default 1)\n")
+		fmt.Fprintf(os.Stderr, "\nImage Processing Parameters:\n")
+		fmt.Fprintf(os.Stderr, "  -width int\n        Target width (pixels)\n")
+		fmt.Fprintf(os.Stderr, "  -threshold-width int\n        Width threshold (default: 1920 for downscaling, 3840 for upscaling)\n")
+		fmt.Fprintf(os.Stderr, "  -threshold-height int\n        Height threshold (default: 1080 for downscaling, 2160 for upscaling)\n")
+		fmt.Fprintf(os.Stderr, "  -ignore-smart-limit\n        Ignore smart default resolution limits\n")
+		fmt.Fprintf(os.Stderr, "\nFile Filtering Parameters:\n")
+		fmt.Fprintf(os.Stderr, "  -ext string\n        Process only files with specified extensions (comma-separated, e.g., heic,jpg,png)\n")
+		fmt.Fprintf(os.Stderr, "  -fake-scan\n        Only scan and list files to be processed, don't actually process them\n")
+		fmt.Fprintf(os.Stderr, "\nVideo Processing Parameters:\n")
+		fmt.Fprintf(os.Stderr, "  -disable-video\n        Disable video processing (video processing is enabled by default)\n")
+		fmt.Fprintf(os.Stderr, "  -video-codec string\n        Video codec (libx264, libx265, etc.) (default \"libx265\")\n")
+		fmt.Fprintf(os.Stderr, "  -video-bitrate string\n        Video bitrate (e.g., 2M, 1000k)\n")
+		fmt.Fprintf(os.Stderr, "  -video-resolution string\n        Video resolution (e.g., 1920x1080, 1280x720)\n")
+		fmt.Fprintf(os.Stderr, "  -video-crf int\n        Video CRF quality (0-51, lower is better quality) (default 23)\n")
+		fmt.Fprintf(os.Stderr, "  -video-preset string\n        Video encoding preset (ultrafast, fast, medium, slow, veryslow) (default \"medium\")\n")
+	}
 }
 
 func validateConfig() error {
