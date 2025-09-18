@@ -71,8 +71,27 @@ verify_image_resolution() {
         return 1
     fi
     
-    local actual_width=$(sips -g pixelWidth "$file" 2>/dev/null | grep pixelWidth | awk '{print $2}')
-    local actual_height=$(sips -g pixelHeight "$file" 2>/dev/null | grep pixelHeight | awk '{print $2}')
+    # 尝试使用不同的工具获取图片分辨率
+    local actual_width actual_height
+    
+    # 优先使用 identify (ImageMagick)
+    if command -v identify >/dev/null 2>&1; then
+        local resolution=$(identify -format "%wx%h" "$file" 2>/dev/null)
+        actual_width=$(echo "$resolution" | cut -d'x' -f1)
+        actual_height=$(echo "$resolution" | cut -d'x' -f2)
+    # 备用方案：使用 sips (macOS)
+    elif command -v sips >/dev/null 2>&1; then
+        actual_width=$(sips -g pixelWidth "$file" 2>/dev/null | grep pixelWidth | awk '{print $2}')
+        actual_height=$(sips -g pixelHeight "$file" 2>/dev/null | grep pixelHeight | awk '{print $2}')
+    # 备用方案：使用 file 命令
+    elif command -v file >/dev/null 2>&1; then
+        local file_info=$(file "$file" 2>/dev/null)
+        actual_width=$(echo "$file_info" | grep -o '[0-9]\+x[0-9]\+' | head -1 | cut -d'x' -f1)
+        actual_height=$(echo "$file_info" | grep -o '[0-9]\+x[0-9]\+' | head -1 | cut -d'x' -f2)
+    else
+        echo "✗ $test_name: 无法获取图片分辨率 - 缺少必要工具 (identify/sips/file)"
+        return 1
+    fi
     
     if [ "$actual_width" = "$expected_width" ] && [ "$actual_height" = "$expected_height" ]; then
         echo "✓ $test_name: 分辨率正确 ${actual_width}x${actual_height}"
