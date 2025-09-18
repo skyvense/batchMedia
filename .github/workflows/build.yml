@@ -109,12 +109,13 @@ jobs:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 1
+      shell: bash
       run: |
         mkdir -p dist
         if [ "$GOOS" = "windows" ]; then
-          go build -ldflags "-s -w" -o dist/batchMedia-${{ matrix.goos }}-${{ matrix.goarch }}.exe .
+          go build -ldflags "-s -w" -o dist/batchMedia-$GOOS-$GOARCH.exe .
         else
-          go build -ldflags "-s -w" -o dist/batchMedia-${{ matrix.goos }}-${{ matrix.goarch }} .
+          go build -ldflags "-s -w" -o dist/batchMedia-$GOOS-$GOARCH .
         fi
     
     - name: Upload artifacts
