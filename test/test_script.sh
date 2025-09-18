@@ -51,6 +51,7 @@ generate_test_data() {
 cleanup_test_data() {
     echo "清理测试数据..."
     rm -rf output/*
+    rm -rf input/small_images
     echo "✓ 测试数据清理完成"
 }
 
@@ -131,6 +132,7 @@ echo
 echo "测试3: 分辨率阈值过滤 (threshold-width=2000)"
 mkdir -p output/test3
 ../bin/batchMedia -inputdir input/images -out output/test3 -size 0.7 -threshold-width 2000 -ignore-smart-limit
+verify_image_resolution "output/test3/large_4k.jpg" "2688" "1512" "测试3-阈值过滤缩放"
 echo "✓ 测试3执行完成"
 echo
 
@@ -138,6 +140,7 @@ echo
 echo "测试4: 高度阈值过滤 (threshold-height=1200)"
 mkdir -p output/test4
 ../bin/batchMedia -inputdir input/images -out output/test4 -size 0.6 -threshold-height 1200 -ignore-smart-limit
+verify_image_resolution "output/test4/large_4k.jpg" "2304" "1296" "测试4-高度阈值过滤"
 echo "✓ 测试4执行完成"
 echo
 
@@ -145,6 +148,7 @@ echo
 echo "测试5: 双阈值过滤 + 缩放 (threshold-width=1920, threshold-height=1080)"
 mkdir -p output/test5
 ../bin/batchMedia -inputdir input/images -out output/test5 -threshold-width 1920 -threshold-height 1080 -size 0.5 -ignore-smart-limit
+verify_image_resolution "output/test5/large_4k.jpg" "1920" "1080" "测试5-双阈值过滤缩放"
 echo "✓ 测试5执行完成"
 echo
 
@@ -152,6 +156,7 @@ echo
 echo "测试6: 只处理JPG文件 (ext=jpg)"
 mkdir -p output/test6
 ../bin/batchMedia -inputdir input/images -out output/test6 -size 0.8 -ext jpg
+verify_image_resolution "output/test6/large_4k.jpg" "3072" "1728" "测试6-文件类型过滤"
 echo "✓ 测试6执行完成"
 echo
 
@@ -174,11 +179,29 @@ echo
 echo "测试9: 混合目录处理（图片+其他文件）"
 mkdir -p output/test9
 ../bin/batchMedia -inputdir input/mixed -out output/test9 -size 0.5
+# 验证混合目录中的图片分辨率
+if [ -f "output/test9/large_4k.jpg" ]; then
+    verify_image_resolution "output/test9/large_4k.jpg" "1920" "1080" "测试9-混合目录处理"
+fi
 echo "✓ 测试9执行完成"
 echo
 
-# 测试10: 视频处理
-echo "测试10: 视频处理"
+# 测试10: 图片放大测试 (size=1.5)
+echo "测试10: 图片放大测试 (size=1.5)"
+mkdir -p input/small_images output/test10
+# 复制小图片到专门目录进行放大测试
+cp input/images/small_hd.jpg input/small_images/
+cp input/images/small_vga.png input/small_images/
+cp input/images/small_thumb.jpg input/small_images/
+../bin/batchMedia -inputdir input/small_images -out output/test10 -size 1.5 -ignore-smart-limit
+# 验证小图片放大效果
+verify_image_resolution "output/test10/small_hd.jpg" "1920" "1080" "测试10-小图片放大"
+verify_image_resolution "output/test10/small_vga.png" "960" "720" "测试10-VGA图片放大"
+echo "✓ 测试10执行完成"
+echo
+
+# 测试11: 视频处理
+echo "测试11: 视频处理"
 if command -v ffmpeg >/dev/null 2>&1; then
     # 创建测试视频
     if [ ! -f "input/videos/test_video.mp4" ]; then
@@ -187,12 +210,12 @@ if command -v ffmpeg >/dev/null 2>&1; then
     fi
     
     if [ -f "input/videos/test_video.mp4" ]; then
-        mkdir -p output/test10
-        ../bin/batchMedia -inputdir input/videos -out output/test10 -size 0.5
-        verify_video_resolution "output/test10/test_video.mp4" "960" "540" "测试10-视频缩放"
-        echo "✓ 测试10执行完成"
+        mkdir -p output/test11
+        ../bin/batchMedia -inputdir input/videos -out output/test11 -size 0.5
+        verify_video_resolution "output/test11/test_video.mp4" "960" "540" "测试11-视频缩放"
+        echo "✓ 测试11执行完成"
     else
-        echo "⚠ 测试10跳过：无法创建测试视频"
+        echo "⚠ 测试11跳过：无法创建测试视频"
     fi
 else
     echo "⚠ FFmpeg未安装，跳过视频测试"
@@ -229,13 +252,18 @@ echo
 
 # 验证图片输出文件（应该比原文件小）
 echo "各测试用例结果验证:"
-for i in {1..10}; do
+for i in {1..11}; do
     test_dir="output/test$i"
     if [ -d "$test_dir" ] && [ "$(ls -A $test_dir 2>/dev/null)" ]; then
         echo "测试$i 输出文件:"
         find "$test_dir" -name "*.jpg" -o -name "*.png" -o -name "*.mp4" | while read -r file; do
             if [ -f "$file" ]; then
-                verify_file_size "$file" 1000 50000000 "测试$i 处理文件"
+                # 对于小图片，使用更小的最小文件大小阈值
+                if [[ "$file" == *"small_thumb"* ]]; then
+                    verify_file_size "$file" 500 50000000 "测试$i 处理文件"
+                else
+                    verify_file_size "$file" 1000 50000000 "测试$i 处理文件"
+                fi
             fi
         done
         
@@ -252,7 +280,7 @@ echo
 # 详细目录内容
 echo "=== 详细输出目录内容 ==="
 echo
-for i in {1..10}; do
+for i in {1..11}; do
     test_dir="output/test$i"
     echo "测试$i 输出目录:"
     ls -lah "$test_dir/" 2>/dev/null || echo "  (空或不存在)"
@@ -279,10 +307,11 @@ echo "✓ 测试6: 文件类型过滤 - 验证扩展名过滤"
 echo "✓ 测试7: 假扫描模式 - 验证预览功能"
 echo "✓ 测试8: 多线程处理 - 验证并发处理能力"
 echo "✓ 测试9: 混合文件处理 - 验证多类型文件处理"
+echo "✓ 测试10: 图片放大测试 - 验证图片放大功能"
 if command -v ffmpeg >/dev/null 2>&1; then
-    echo "✓ 测试10: 视频处理 - 验证视频缩放功能"
+    echo "✓ 测试11: 视频处理 - 验证视频缩放功能"
 else
-    echo "⚠ 测试10: 视频处理 - 跳过(FFmpeg未安装)"
+    echo "⚠ 测试11: 视频处理 - 跳过(FFmpeg未安装)"
 fi
 echo
 

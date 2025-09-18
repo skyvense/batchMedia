@@ -81,12 +81,12 @@ func processImage(inputPath, outputPath, relPath string, info os.FileInfo, dirSt
 		fmt.Printf("Skipping %s: resolution %dx%d is outside threshold range (size: %d bytes)\n", inputPath, originalWidth, originalHeight, info.Size())
 
 		// Record statistics for skipped image
-	statsMutex.Lock()
-	stats.SkippedImages++
-	stats.TotalOutputSize += info.Size()
-	dirStats.SkippedImages++
-	dirStats.TotalOutputSize += info.Size()
-	statsMutex.Unlock()
+		statsMutex.Lock()
+		stats.SkippedImages++
+		stats.TotalOutputSize += info.Size()
+		dirStats.SkippedImages++
+		dirStats.TotalOutputSize += info.Size()
+		statsMutex.Unlock()
 
 		// Record file info
 		fileInfo := FileInfo{
@@ -454,8 +454,8 @@ func clearOrientationTag(exifData []byte) []byte {
 	// This is a simplified approach - in a full implementation, you'd parse the TIFF structure
 	for i := 0; i < len(cleanedData)-4; i++ {
 		// Look for orientation tag (0x0112 in big-endian or 0x1201 in little-endian)
-		if (cleanedData[i] == 0x01 && cleanedData[i+1] == 0x12) || 
-		   (cleanedData[i] == 0x12 && cleanedData[i+1] == 0x01) {
+		if (cleanedData[i] == 0x01 && cleanedData[i+1] == 0x12) ||
+			(cleanedData[i] == 0x12 && cleanedData[i+1] == 0x01) {
 			// Found potential orientation tag, set value to 1 (normal orientation)
 			if i+8 < len(cleanedData) {
 				// Set the value to 1 (normal orientation)
