@@ -29,7 +29,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y imagemagick ffmpeg
+        sudo apt-get install -y imagemagick ffmpeg libheif-dev libde265-dev libx265-dev libaom-dev
     
     - name: Download dependencies
       run: go mod download
@@ -80,12 +80,12 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
-        sudo apt-get install -y imagemagick ffmpeg
+        sudo apt-get install -y imagemagick ffmpeg libheif-dev libde265-dev libx265-dev libaom-dev
     
     - name: Install dependencies (macOS)
       if: matrix.os == 'macos-latest'
       run: |
-        brew install imagemagick ffmpeg
+        brew install imagemagick ffmpeg libheif libde265 x265 libaom
     
     - name: Cache Go modules
       uses: actions/cache@v3
