@@ -85,7 +85,7 @@ jobs:
     - name: Install dependencies (macOS)
       if: matrix.os == 'macos-latest'
       run: |
-        brew install imagemagick ffmpeg libheif libde265 x265 libaom
+        brew install imagemagick ffmpeg libheif libde265 x265
     
     - name: Cache Go modules
       uses: actions/cache@v3
