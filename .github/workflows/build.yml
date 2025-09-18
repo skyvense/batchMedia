@@ -29,6 +29,9 @@ jobs:
     - name: Download dependencies
       run: go mod download
     
+    - name: Build project
+      run: go build -o bin/batchMedia
+    
     - name: Run tests
       run: |
         cd test
